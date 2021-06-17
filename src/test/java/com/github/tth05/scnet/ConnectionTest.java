@@ -17,6 +17,7 @@ public class ConnectionTest extends SCNetTest {
 
     @Test
     public void testIsConnected() {
+        //Disconnect from server side
         withClientAndServer((s, c) -> {
             assertTrue(s.getClient().isConnected());
             assertTrue(c.isConnected());
@@ -25,6 +26,7 @@ public class ConnectionTest extends SCNetTest {
             assertFalse(c.isConnected());
         });
 
+        //Disconnect from client side
         withClientAndServer((s, c) -> {
             assertTrue(s.getClient().isConnected());
             assertTrue(c.isConnected());

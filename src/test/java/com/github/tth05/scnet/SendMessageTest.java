@@ -3,6 +3,7 @@ package com.github.tth05.scnet;
 import com.github.tth05.scnet.message.IMessage;
 import io.netty.buffer.ByteBuf;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -10,6 +11,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+@Timeout(10)
 public class SendMessageTest extends SCNetTest {
 
     @Test

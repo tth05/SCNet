@@ -21,8 +21,11 @@ public class DefaultMessageProcessor implements IMessageProcessor {
     private final Map<Class<? extends IMessage>, Short> outgoingMessages = new HashMap<>();
 
     private final Queue<IMessage> outgoingMessageQueue = new ConcurrentLinkedDeque<>();
+
     private final ByteBuf writeBuffer = Unpooled.directBuffer(100);
     private final ByteBuffer messageHeaderBuffer = ByteBuffer.allocateDirect(6);
+
+    private int processLoopDelay = 5;
 
     public DefaultMessageProcessor() {
         //Register noop message
@@ -58,6 +61,8 @@ public class DefaultMessageProcessor implements IMessageProcessor {
     @Override
     public boolean process(Selector selector, SocketChannel channel, IMessageBus messageBus) {
         try {
+            Thread.sleep(this.processLoopDelay);
+
             int selected = selector.select(5);
             if (selected < 1)
                 return true;
@@ -137,5 +142,13 @@ public class DefaultMessageProcessor implements IMessageProcessor {
         } catch (Throwable t) {
             return false;
         }
+    }
+
+    public void setProcessLoopDelay(int processLoopDelay) {
+        this.processLoopDelay = processLoopDelay;
+    }
+
+    public int getProcessLoopDelay() {
+        return processLoopDelay;
     }
 }
