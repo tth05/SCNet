@@ -51,7 +51,10 @@ public class ConnectionTest extends SCNetTest {
         withClientAndServer((s, c) -> {
             Client c2 = new Client();
             assertTrue(c2.connect(new InetSocketAddress(6969)));
+            assertDoesNotThrow(() -> Thread.sleep(50));
+            //Second client can't connect
             assertFalse(c2.isConnected());
+            //Disconnect first client
             s.getClient().close();
 
             assertTrue(c.connect(new InetSocketAddress(6969)));

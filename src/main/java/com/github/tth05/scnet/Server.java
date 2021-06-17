@@ -46,7 +46,7 @@ public class Server implements AutoCloseable {
             while (true) {
                 acceptClient();
                 if (this.client != null) {
-                    if (!this.client.readAndWrite()) {
+                    if (!this.client.process()) {
                         this.client = null;
                     }
                 }
@@ -59,7 +59,7 @@ public class Server implements AutoCloseable {
             return;
 
         try {
-            int select = this.selector.select(5);
+            int select = this.selector.selectNow();
             if (select < 1)
                 return;
 

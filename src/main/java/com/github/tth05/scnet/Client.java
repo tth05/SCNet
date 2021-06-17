@@ -21,9 +21,11 @@ public class Client extends AbstractClient {
 
     public boolean connect(SocketAddress address) {
         try {
-            this.close();
+            if (this.socketChannel != null) {
+                this.close();
+                initChannelAndSelector(null);
+            }
 
-            initChannelAndSelector(null);
             this.socketChannel.register(this.selector, SelectionKey.OP_CONNECT);
             this.socketChannel.connect(address);
 
@@ -36,7 +38,7 @@ public class Client extends AbstractClient {
                 if (!key.isConnectable())
                     throw new IllegalStateException("Invalid key");
 
-                key.cancel();
+                key.interestOps(SelectionKey.OP_READ | SelectionKey.OP_WRITE);
                 iterator.remove();
             }
 
@@ -46,7 +48,8 @@ public class Client extends AbstractClient {
             if (this.socketChannel.isConnected()) {
                 this.executor.execute(() -> {
                     while (true) {
-                        readAndWrite();
+                        if (!this.process())
+                            return;
                     }
                 });
                 return true;
