@@ -9,18 +9,14 @@ import java.nio.ByteBuffer;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
 import java.nio.channels.SocketChannel;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.Map;
-import java.util.Queue;
-import java.util.concurrent.ConcurrentLinkedDeque;
+import java.util.*;
 
 public class DefaultMessageProcessor implements IMessageProcessor {
 
     private final Map<Short, Class<? extends IMessage>> incomingMessages = new HashMap<>();
     private final Map<Class<? extends IMessage>, Short> outgoingMessages = new HashMap<>();
 
-    private final Queue<IMessage> outgoingMessageQueue = new ConcurrentLinkedDeque<>();
+    private final Queue<IMessage> outgoingMessageQueue = new ArrayDeque<>();
 
     private final ByteBuf writeBuffer = Unpooled.directBuffer(100);
     private final ByteBuffer messageHeaderBuffer = ByteBuffer.allocateDirect(6);
@@ -52,10 +48,12 @@ public class DefaultMessageProcessor implements IMessageProcessor {
 
     @Override
     public void enqueueMessage(IMessage message) {
-        if (this.outgoingMessages.get(message.getClass()) == null)
-            throw new IllegalArgumentException("Message not registered");
+        synchronized (this.outgoingMessageQueue) {
+            if (this.outgoingMessages.get(message.getClass()) == null)
+                throw new IllegalArgumentException("Message not registered");
 
-        this.outgoingMessageQueue.offer(message);
+            this.outgoingMessageQueue.offer(message);
+        }
     }
 
     @Override
@@ -71,8 +69,6 @@ public class DefaultMessageProcessor implements IMessageProcessor {
                 SelectionKey key = iterator.next();
 
                 if (key.isWritable() && !this.outgoingMessageQueue.isEmpty()) {
-                    long time = System.nanoTime();
-
                     synchronized (this.outgoingMessageQueue) {
                         for (IMessage message : this.outgoingMessageQueue) {
                             this.writeBuffer.setIndex(0, 6);
@@ -96,8 +92,6 @@ public class DefaultMessageProcessor implements IMessageProcessor {
 
                 }
                 if (key.isReadable()) {
-                    long time = System.nanoTime();
-
                     this.messageHeaderBuffer.clear();
                     //2 bytes id, 4 bytes size
                     int bytesRead = channel.read(this.messageHeaderBuffer);

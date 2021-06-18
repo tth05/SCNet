@@ -10,6 +10,7 @@ import java.nio.ByteBuffer;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
 import java.nio.channels.SocketChannel;
+import java.util.concurrent.locks.ReentrantLock;
 
 public class AbstractClient implements AutoCloseable {
 
@@ -18,6 +19,8 @@ public class AbstractClient implements AutoCloseable {
 
     protected IMessageBus messageBus = new DefaultMessageBus();
     protected IMessageProcessor messageProcessor = new DefaultMessageProcessor();
+
+    private final ReentrantLock selectorLock = new ReentrantLock();
 
     public AbstractClient() {
         this(null);
@@ -44,12 +47,23 @@ public class AbstractClient implements AutoCloseable {
     }
 
     protected boolean process() {
-        //Prevent close call while reading we're doing this
-        synchronized (this.selector) {
-            if (!this.selector.isOpen())
-                return false;
-            return this.messageProcessor.process(this.selector, this.socketChannel, this.messageBus);
+        //Allow other threads to acquire this lock before us. The while loop in the Client won't allow other threads to
+        // acquire this lock
+        if (selectorLock.hasQueuedThreads()) {
+            try {
+                Thread.sleep(5);
+            } catch (InterruptedException ignored) {}
         }
+
+        //Prevent close call while reading we're doing this
+        selectorLock.lock();
+        if (!this.selector.isOpen()) {
+            selectorLock.unlock();
+            return false;
+        }
+        boolean b = this.messageProcessor.process(this.selector, this.socketChannel, this.messageBus);
+        selectorLock.unlock();
+        return b;
     }
 
     public boolean isConnected() {
@@ -70,9 +84,9 @@ public class AbstractClient implements AutoCloseable {
     @Override
     public void close() {
         try {
-            synchronized (this.selector) {
-                this.selector.close();
-            }
+            selectorLock.lock();
+            this.selector.close();
+            selectorLock.unlock();
             this.socketChannel.close();
         } catch (IOException e) {
             e.printStackTrace();

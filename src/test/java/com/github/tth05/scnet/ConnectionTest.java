@@ -22,7 +22,8 @@ public class ConnectionTest extends SCNetTest {
             assertTrue(s.getClient().isConnected());
             assertTrue(c.isConnected());
             s.getClient().close();
-            assertFalse(s.getClient().isConnected());
+            assertDoesNotThrow(() -> Thread.sleep(50));
+            assertNull(s.getClient());
             assertFalse(c.isConnected());
         });
 
@@ -31,7 +32,8 @@ public class ConnectionTest extends SCNetTest {
             assertTrue(s.getClient().isConnected());
             assertTrue(c.isConnected());
             c.close();
-            assertFalse(s.getClient().isConnected());
+            assertDoesNotThrow(() -> Thread.sleep(50));
+            assertNull(s.getClient());
             assertFalse(c.isConnected());
         });
     }
