@@ -1,12 +1,12 @@
 package com.github.tth05.scnet.message;
 
-import io.netty.buffer.ByteBuf;
+import java.nio.ByteBuffer;
 
 public interface IMessageOutgoing extends IMessage {
 
-    default void read(ByteBuf messageByteBuffer) {
+    default void read(ByteBuffer messageByteBuffer) {
         throw new UnsupportedOperationException();
     }
 
-    void write(ByteBuf messageByteBuffer);
+    void write(ByteBuffer messageByteBuffer);
 }

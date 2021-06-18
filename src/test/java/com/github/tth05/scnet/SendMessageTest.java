@@ -1,10 +1,10 @@
 package com.github.tth05.scnet;
 
 import com.github.tth05.scnet.message.IMessage;
-import io.netty.buffer.ByteBuf;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
+import java.nio.ByteBuffer;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -48,19 +48,19 @@ public class SendMessageTest extends SCNetTest {
         }
 
         @Override
-        public void read(ByteBuf messageByteBuffer) {
+        public void read(ByteBuffer messageByteBuffer) {
             for (int j = 0; j < 10; j++) {
-                this.i = messageByteBuffer.readInt();
+                this.i = messageByteBuffer.getInt();
             }
-            this.i = messageByteBuffer.readInt();
+            this.i = messageByteBuffer.getInt();
         }
 
         @Override
-        public void write(ByteBuf messageByteBuffer) {
+        public void write(ByteBuffer messageByteBuffer) {
             for (int j = 0; j < 10; j++) {
-                messageByteBuffer.writeInt(69);
+                messageByteBuffer.putInt(69);
             }
-            messageByteBuffer.writeInt(i);
+            messageByteBuffer.putInt(i);
         }
     }
 }

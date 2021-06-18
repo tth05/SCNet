@@ -12,7 +12,7 @@ import java.nio.channels.Selector;
 import java.nio.channels.SocketChannel;
 import java.util.concurrent.locks.ReentrantLock;
 
-public class AbstractClient implements AutoCloseable {
+public abstract class AbstractClient implements AutoCloseable {
 
     protected Selector selector;
     protected SocketChannel socketChannel;
@@ -49,20 +49,20 @@ public class AbstractClient implements AutoCloseable {
     protected boolean process() {
         //Allow other threads to acquire this lock before us. The while loop in the Client won't allow other threads to
         // acquire this lock
-        if (selectorLock.hasQueuedThreads()) {
+        if (this.selectorLock.hasQueuedThreads()) {
             try {
                 Thread.sleep(5);
             } catch (InterruptedException ignored) {}
         }
 
-        //Prevent close call while reading we're doing this
-        selectorLock.lock();
+        //Prevent close call while we're doing this
+        this.selectorLock.lock();
         if (!this.selector.isOpen()) {
-            selectorLock.unlock();
+            this.selectorLock.unlock();
             return false;
         }
         boolean b = this.messageProcessor.process(this.selector, this.socketChannel, this.messageBus);
-        selectorLock.unlock();
+        this.selectorLock.unlock();
         return b;
     }
 
@@ -84,9 +84,9 @@ public class AbstractClient implements AutoCloseable {
     @Override
     public void close() {
         try {
-            selectorLock.lock();
+            this.selectorLock.lock();
             this.selector.close();
-            selectorLock.unlock();
+            this.selectorLock.unlock();
             this.socketChannel.close();
         } catch (IOException e) {
             e.printStackTrace();

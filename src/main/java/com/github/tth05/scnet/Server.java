@@ -8,7 +8,9 @@ import java.nio.channels.Selector;
 import java.nio.channels.ServerSocketChannel;
 import java.util.Iterator;
 import java.util.concurrent.Executor;
-import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 public class Server implements AutoCloseable {
 
@@ -20,7 +22,13 @@ public class Server implements AutoCloseable {
     private ServerClient client;
 
     public Server() {
-        this(Executors.newSingleThreadExecutor());
+        this(new ThreadPoolExecutor(1, 1,
+                0L, TimeUnit.MILLISECONDS,
+                new LinkedBlockingQueue<>(), r -> {
+            Thread t = new Thread(r);
+            t.setName("SCNet Server");
+            return t;
+        }));
     }
 
     public Server(Executor executor) {

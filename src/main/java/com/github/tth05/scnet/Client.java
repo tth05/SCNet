@@ -3,15 +3,20 @@ package com.github.tth05.scnet;
 import java.net.SocketAddress;
 import java.nio.channels.SelectionKey;
 import java.util.Iterator;
-import java.util.concurrent.Executor;
-import java.util.concurrent.Executors;
+import java.util.concurrent.*;
 
 public class Client extends AbstractClient {
 
     private final Executor executor;
 
     public Client() {
-        this(Executors.newSingleThreadExecutor());
+        this(new ThreadPoolExecutor(1, 1,
+                0L, TimeUnit.MILLISECONDS,
+                new LinkedBlockingQueue<>(), r -> {
+            Thread t = new Thread(r);
+            t.setName("SCNet Client");
+            return t;
+        }));
     }
 
     public Client(Executor executor) {
