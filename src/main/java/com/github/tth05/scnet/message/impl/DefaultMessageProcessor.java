@@ -1,7 +1,9 @@
 package com.github.tth05.scnet.message.impl;
 
+import com.github.tth05.scnet.ByteBufferUtils;
 import com.github.tth05.scnet.message.*;
 
+import java.io.IOException;
 import java.lang.invoke.LambdaMetafactory;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
@@ -15,13 +17,15 @@ import java.util.function.Supplier;
 
 public class DefaultMessageProcessor implements IMessageProcessor {
 
+    private static final int MESSAGE_HEADER_BYTES = 6;
+
     private final Map<Short, RegisteredIncomingMessage> incomingMessages = new HashMap<>();
     private final Map<Class<? extends IMessage>, Short> outgoingMessages = new HashMap<>();
 
     private final Queue<IMessage> outgoingMessageQueue = new ArrayDeque<>();
 
     private ByteBuffer writeBuffer = ByteBuffer.allocateDirect(100);
-    private ByteBuffer messageBuffer = ByteBuffer.allocateDirect(100);
+    private ByteBuffer messageBuffer = ByteBuffer.allocateDirect(1000);
 
     private int processLoopDelay = 5;
 
@@ -71,67 +75,11 @@ public class DefaultMessageProcessor implements IMessageProcessor {
                 SelectionKey key = iterator.next();
 
                 if (key.isWritable() && !this.outgoingMessageQueue.isEmpty()) {
-                    synchronized (this.outgoingMessageQueue) {
-                        for (IMessage message : this.outgoingMessageQueue) {
-                            this.writeBuffer.clear();
-                            this.writeBuffer.position(6);
-                            message.write(this.writeBuffer);
-
-                            int size = this.writeBuffer.position() - 6;
-                            short messageId = this.outgoingMessages.get(message.getClass());
-
-                            this.writeBuffer.position(0);
-                            this.writeBuffer.putShort(messageId);
-                            this.writeBuffer.putInt(size);
-                            this.writeBuffer.position(this.writeBuffer.position() + size);
-
-                            this.writeBuffer.flip();
-                            while (this.writeBuffer.hasRemaining())
-                                channel.write(this.writeBuffer);
-                        }
-
-                        this.outgoingMessageQueue.clear();
-                    }
-
+                    doWrite(channel);
                 }
                 if (key.isReadable()) {
-                    this.messageBuffer.clear();
-                    //2 bytes id, 4 bytes size
-                    this.messageBuffer.limit(6);
-                    int bytesRead = channel.read(this.messageBuffer);
-
-                    while (bytesRead > 0 || this.messageBuffer.position() < 6) {
-                        bytesRead = channel.read(this.messageBuffer);
-                        if (bytesRead == -1)
-                            return false;
-                    }
-
-                    this.messageBuffer.flip();
-                    short id = this.messageBuffer.getShort();
-                    int size = this.messageBuffer.getInt();
-
-                    if (this.messageBuffer.capacity() < size) {
-                        this.messageBuffer = ByteBuffer.allocateDirect(size);
-                    }
-
-                    this.messageBuffer.clear();
-                    this.messageBuffer.limit(size);
-
-                    bytesRead = channel.read(messageBuffer);
-                    while (bytesRead > 0 || messageBuffer.position() < size) {
-                        bytesRead = channel.read(messageBuffer);
-                        if (bytesRead == -1)
-                            return false;
-                    }
-
-                    this.messageBuffer.flip();
-
-                    RegisteredIncomingMessage registeredMessage = this.incomingMessages.get(id);
-                    if (registeredMessage != null) {
-                        IMessage message = registeredMessage.newInstance();
-                        message.read(this.messageBuffer);
-                        messageBus.post(message);
-                    }
+                    if (!doRead(channel, messageBus))
+                        return false;
                 }
 
                 iterator.remove();
@@ -140,6 +88,107 @@ public class DefaultMessageProcessor implements IMessageProcessor {
             return true;
         } catch (Throwable t) {
             t.printStackTrace();
+            return false;
+        }
+    }
+
+    private void doWrite(SocketChannel channel) throws IOException {
+        synchronized (this.outgoingMessageQueue) {
+            for (IMessage message : this.outgoingMessageQueue) {
+                this.writeBuffer.clear();
+                this.writeBuffer.position(MESSAGE_HEADER_BYTES);
+                message.write(this.writeBuffer);
+
+                int size = this.writeBuffer.position() - MESSAGE_HEADER_BYTES;
+                short messageId = this.outgoingMessages.get(message.getClass());
+
+                this.writeBuffer.position(0);
+                this.writeBuffer.putShort(messageId);
+                this.writeBuffer.putInt(size);
+                this.writeBuffer.position(this.writeBuffer.position() + size);
+
+                this.writeBuffer.flip();
+
+                while (this.writeBuffer.hasRemaining())
+                    channel.write(this.writeBuffer);
+            }
+
+            this.outgoingMessageQueue.clear();
+        }
+    }
+
+    private boolean doRead(SocketChannel channel, IMessageBus messageBus) {
+        try {
+            this.messageBuffer.clear();
+            int bytesInBuffer = channel.read(this.messageBuffer);
+
+            int messageStart = 0;
+            while (true) {
+                //Move remaining bytes to front
+                if (this.messageBuffer.capacity() - messageStart < MESSAGE_HEADER_BYTES) {
+                    byte[] tmp = new byte[this.messageBuffer.capacity() - messageStart];
+                    this.messageBuffer.position(messageStart);
+                    this.messageBuffer.get(tmp);
+                    this.messageBuffer.clear();
+                    this.messageBuffer.put(tmp);
+                    messageStart = 0;
+                    bytesInBuffer = tmp.length;
+                }
+
+                //2 bytes id, 4 bytes size
+                if (bytesInBuffer - messageStart < MESSAGE_HEADER_BYTES) {
+                    if (!ByteBufferUtils.readAtLeastBlocking(channel, this.messageBuffer, 6))
+                        return false;
+                    bytesInBuffer = this.messageBuffer.position();
+                }
+
+                this.messageBuffer.position(messageStart);
+                short id = this.messageBuffer.getShort();
+                int size = this.messageBuffer.getInt();
+
+                if (this.messageBuffer.capacity() - messageStart < MESSAGE_HEADER_BYTES + size) { //Message does not fit in current buffer
+                    //Create new buffer which can hold the message
+                    ByteBuffer old = this.messageBuffer;
+                    old.position(0);
+                    this.messageBuffer = ByteBuffer.allocateDirect(messageStart + MESSAGE_HEADER_BYTES + size);
+                    this.messageBuffer.put(old);
+                    //Read the full message
+                    if (!ByteBufferUtils.readAtLeastLimitBlocking(channel, this.messageBuffer))
+                        return false;
+                    bytesInBuffer = this.messageBuffer.position();
+                } else if (bytesInBuffer - messageStart < MESSAGE_HEADER_BYTES + size) { //Full message is not contained in buffer but fits
+                    this.messageBuffer.position(bytesInBuffer);
+                    //Read rest of message
+                    if (!ByteBufferUtils.readAtLeastBlocking(channel, this.messageBuffer, messageStart + MESSAGE_HEADER_BYTES + size))
+                        return false;
+                    bytesInBuffer = this.messageBuffer.position();
+                }
+
+                this.messageBuffer.position(messageStart + MESSAGE_HEADER_BYTES);
+
+                RegisteredIncomingMessage registeredMessage = this.incomingMessages.get(id);
+                if (registeredMessage != null) {
+                    IMessage message = registeredMessage.newInstance();
+                    message.read(this.messageBuffer);
+                    messageBus.post(message);
+                }
+
+                messageStart += MESSAGE_HEADER_BYTES + size;
+
+                if (messageStart >= bytesInBuffer) {
+                    this.messageBuffer.position(0);
+                    bytesInBuffer = channel.read(this.messageBuffer);
+                    messageStart = 0;
+                    if (bytesInBuffer == 0) {
+                        break;
+                    }
+                    if (bytesInBuffer == -1)
+                        return false;
+                }
+            }
+
+            return true;
+        } catch (Throwable t) {
             return false;
         }
     }
@@ -154,20 +203,20 @@ public class DefaultMessageProcessor implements IMessageProcessor {
 
     private static final class RegisteredIncomingMessage {
 
-        private final Class<? extends IMessage> messageClass;
         private final Supplier<? extends IMessage> instanceSupplier;
 
         private RegisteredIncomingMessage(Class<? extends IMessage> messageClass) {
-            this.messageClass = messageClass;
             try {
                 MethodHandles.Lookup lookup = MethodHandles.lookup();
                 MethodHandle constructorHandle = lookup.findConstructor(messageClass, MethodType.methodType(void.class));
+                //noinspection unchecked
                 this.instanceSupplier = (Supplier<? extends IMessage>) LambdaMetafactory.metafactory(
-                        lookup, "get", MethodType.methodType(Supplier.class),
+                        lookup,
+                        "get", MethodType.methodType(Supplier.class),
                         constructorHandle.type().generic(), constructorHandle, constructorHandle.type()
                 ).getTarget().invokeExact();
             } catch (Throwable e) {
-                throw new RuntimeException(e);
+                throw new IllegalArgumentException("Unable to create lambda factory for constructor", e);
             }
         }
 
