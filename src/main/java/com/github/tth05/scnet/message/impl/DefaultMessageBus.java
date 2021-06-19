@@ -22,7 +22,7 @@ public class DefaultMessageBus implements IMessageBus {
 
     @Override
     public void post(IMessage message) {
-        for (Iterator<RegisteredListener> iterator = this.listeners.computeIfAbsent(message.getClass(), c -> Collections.emptyList()).iterator(); iterator.hasNext(); ) {
+        for (Iterator<RegisteredListener> iterator = this.listeners.getOrDefault(message.getClass(), Collections.emptyList()).iterator(); iterator.hasNext(); ) {
             RegisteredListener listener = iterator.next();
 
             //noinspection unchecked

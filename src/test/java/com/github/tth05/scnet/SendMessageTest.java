@@ -28,13 +28,24 @@ public class SendMessageTest extends SCNetTest {
             s.getClient().getMessageProcessor().registerMessage((short) 1, IntMessage.class);
 
             //Listen for message
+            int c1 = 200000;
+            CountDownLatch l = new CountDownLatch(c1);
             AtomicInteger messagePayload = new AtomicInteger(-1);
+            long t = System.nanoTime();
             s.getClient().getMessageBus().listenAlways(IntMessage.class, (i) -> {
+                l.countDown();
                 messagePayload.set(i.i);
             });
 
             //Send message
-            c.getMessageProcessor().enqueueMessage(new IntMessage(number));
+            for (int i = 0; i < c1; i++) {
+                c.getMessageProcessor().enqueueMessage(new IntMessage(number));
+            }
+            try {
+                l.await();
+            } catch (InterruptedException e) {
+            }
+            System.out.println((System.nanoTime() - t) / 1_000_000);
             //Wait for message to arrive
             assertDoesNotThrow(() -> Thread.sleep(50));
             assertEquals(number, messagePayload.get());
@@ -53,7 +64,7 @@ public class SendMessageTest extends SCNetTest {
 
             //Listen for message
             AtomicInteger messagePayload = new AtomicInteger(-1);
-            CountDownLatch l = new CountDownLatch(2000);
+            CountDownLatch l = new CountDownLatch(20000);
             s.getClient().getMessageBus().listenAlways(RandomDataMessage.class, (r) -> {
                 l.countDown();
             });
@@ -62,16 +73,18 @@ public class SendMessageTest extends SCNetTest {
                 l.countDown();
             });
 
+            c.getMessageProcessor().enqueueMessage(new IntMessage(number));
+
             //Send message
-            for (int i = 0; i < 2000; i++) {
-                if (Math.random() < 0.4) {
-                    c.getMessageProcessor().enqueueMessage(new IntMessage(number));
-                } else {
-                    c.getMessageProcessor().enqueueMessage(new RandomDataMessage());
-                }
+            for (int i = 0; i < 20000 - 1; i++) {
+//                    c.getMessageProcessor().enqueueMessage(new IntMessage(number));
+                c.getMessageProcessor().enqueueMessage(new RandomDataMessage());
             }
 
+            long t = System.nanoTime();
             assertDoesNotThrow((Executable) l::await);
+            System.out.println((System.nanoTime() - t) / 1_000_000d);
+
             //Wait for message to arrive
             assertEquals(number, messagePayload.get());
         });
@@ -116,7 +129,7 @@ public class SendMessageTest extends SCNetTest {
 
         @Override
         public void write(ByteBuffer messageByteBuffer) {
-            int l = ThreadLocalRandom.current().nextInt(25);
+            int l = ThreadLocalRandom.current().nextInt(75);
             messageByteBuffer.putInt(l);
             messageByteBuffer.put(IntStream.range(0, l).mapToObj(i -> "1").collect(Collectors.joining()).getBytes(StandardCharsets.UTF_8));
         }

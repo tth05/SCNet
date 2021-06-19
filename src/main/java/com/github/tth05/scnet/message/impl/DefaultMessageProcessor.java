@@ -13,6 +13,7 @@ import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
 import java.nio.channels.SocketChannel;
 import java.util.*;
+import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.function.Supplier;
 
 public class DefaultMessageProcessor implements IMessageProcessor {
@@ -22,10 +23,10 @@ public class DefaultMessageProcessor implements IMessageProcessor {
     private final Map<Short, RegisteredIncomingMessage> incomingMessages = new HashMap<>();
     private final Map<Class<? extends IMessage>, Short> outgoingMessages = new HashMap<>();
 
-    private final Queue<IMessage> outgoingMessageQueue = new ArrayDeque<>();
+    private final Queue<IMessage> outgoingMessageQueue = new ConcurrentLinkedDeque<>();
 
-    private ByteBuffer writeBuffer = ByteBuffer.allocateDirect(100);
-    private ByteBuffer messageBuffer = ByteBuffer.allocateDirect(1000);
+    private ByteBuffer writeBuffer = ByteBuffer.allocateDirect(4096);
+    private ByteBuffer readBuffer = ByteBuffer.allocateDirect(4096);
 
     private int processLoopDelay = 5;
 
@@ -54,12 +55,7 @@ public class DefaultMessageProcessor implements IMessageProcessor {
 
     @Override
     public void enqueueMessage(IMessage message) {
-        synchronized (this.outgoingMessageQueue) {
-            if (this.outgoingMessages.get(message.getClass()) == null)
-                throw new IllegalArgumentException("Message not registered");
-
-            this.outgoingMessageQueue.offer(message);
-        }
+        this.outgoingMessageQueue.offer(message);
     }
 
     @Override
@@ -93,91 +89,94 @@ public class DefaultMessageProcessor implements IMessageProcessor {
     }
 
     private void doWrite(SocketChannel channel) throws IOException {
-        synchronized (this.outgoingMessageQueue) {
-            for (IMessage message : this.outgoingMessageQueue) {
-                this.writeBuffer.clear();
-                this.writeBuffer.position(MESSAGE_HEADER_BYTES);
-                message.write(this.writeBuffer);
+        for (Iterator<IMessage> iterator = this.outgoingMessageQueue.iterator(); iterator.hasNext(); ) {
+            IMessage message = iterator.next();
+            this.writeBuffer.clear();
+            this.writeBuffer.position(MESSAGE_HEADER_BYTES);
+            message.write(this.writeBuffer);
 
-                int size = this.writeBuffer.position() - MESSAGE_HEADER_BYTES;
-                short messageId = this.outgoingMessages.get(message.getClass());
+            int size = this.writeBuffer.position() - MESSAGE_HEADER_BYTES;
+            short messageId = this.outgoingMessages.getOrDefault(message.getClass(), (short) -1);
+            if (messageId == -1)
+                throw new IllegalArgumentException("Message " + message.getClass() + " is not registered");
 
-                this.writeBuffer.position(0);
-                this.writeBuffer.putShort(messageId);
-                this.writeBuffer.putInt(size);
-                this.writeBuffer.position(this.writeBuffer.position() + size);
+            this.writeBuffer.position(0);
+            this.writeBuffer.putShort(messageId);
+            this.writeBuffer.putInt(size);
+            this.writeBuffer.position(this.writeBuffer.position() + size);
 
-                this.writeBuffer.flip();
+            this.writeBuffer.flip();
 
-                while (this.writeBuffer.hasRemaining())
-                    channel.write(this.writeBuffer);
-            }
+            while (this.writeBuffer.hasRemaining())
+                channel.write(this.writeBuffer);
 
-            this.outgoingMessageQueue.clear();
+            iterator.remove();
         }
     }
 
     private boolean doRead(SocketChannel channel, IMessageBus messageBus) {
         try {
-            this.messageBuffer.clear();
-            int bytesInBuffer = channel.read(this.messageBuffer);
+            this.readBuffer.clear();
+            int bytesInBuffer = channel.read(this.readBuffer);
+            if (bytesInBuffer == -1)
+                return false;
 
             int messageStart = 0;
             while (true) {
                 //Move remaining bytes to front
-                if (this.messageBuffer.capacity() - messageStart < MESSAGE_HEADER_BYTES) {
-                    byte[] tmp = new byte[this.messageBuffer.capacity() - messageStart];
-                    this.messageBuffer.position(messageStart);
-                    this.messageBuffer.get(tmp);
-                    this.messageBuffer.clear();
-                    this.messageBuffer.put(tmp);
+                if (this.readBuffer.capacity() - messageStart < MESSAGE_HEADER_BYTES) {
+                    ByteBufferUtils.moveToFrontAndClear(this.readBuffer, messageStart);
                     messageStart = 0;
-                    bytesInBuffer = tmp.length;
+                    bytesInBuffer = this.readBuffer.position();
                 }
 
                 //2 bytes id, 4 bytes size
                 if (bytesInBuffer - messageStart < MESSAGE_HEADER_BYTES) {
-                    if (!ByteBufferUtils.readAtLeastBlocking(channel, this.messageBuffer, 6))
+                    if (!ByteBufferUtils.readAtLeastBlocking(channel, this.readBuffer, 6))
                         return false;
-                    bytesInBuffer = this.messageBuffer.position();
+                    bytesInBuffer = this.readBuffer.position();
                 }
 
-                this.messageBuffer.position(messageStart);
-                short id = this.messageBuffer.getShort();
-                int size = this.messageBuffer.getInt();
+                this.readBuffer.position(messageStart);
+                short id = this.readBuffer.getShort();
+                int size = this.readBuffer.getInt();
 
-                if (this.messageBuffer.capacity() - messageStart < MESSAGE_HEADER_BYTES + size) { //Message does not fit in current buffer
-                    //Create new buffer which can hold the message
-                    ByteBuffer old = this.messageBuffer;
-                    old.position(0);
-                    this.messageBuffer = ByteBuffer.allocateDirect(messageStart + MESSAGE_HEADER_BYTES + size);
-                    this.messageBuffer.put(old);
+                if (this.readBuffer.capacity() - messageStart < MESSAGE_HEADER_BYTES + size) { //Full message is not contained in current buffer
+                    if (MESSAGE_HEADER_BYTES + size <= this.readBuffer.capacity()) { //If the buffer can hold the message, then move it to the front and read the rest
+                        ByteBufferUtils.moveToFrontAndClear(this.readBuffer, messageStart);
+                    } else { //If the full message can't fit into the buffer, then move it to the front in a new buffer
+                        //Create new buffer which can hold the message
+                        this.readBuffer.position(messageStart);
+                        this.readBuffer = ByteBufferUtils.moveToNewDirectBuffer(this.readBuffer, MESSAGE_HEADER_BYTES + size);
+                    }
+
+                    messageStart = 0;
                     //Read the full message
-                    if (!ByteBufferUtils.readAtLeastLimitBlocking(channel, this.messageBuffer))
+                    if (!ByteBufferUtils.readAtLeastBlocking(channel, this.readBuffer, messageStart + MESSAGE_HEADER_BYTES + size))
                         return false;
-                    bytesInBuffer = this.messageBuffer.position();
+                    bytesInBuffer = this.readBuffer.position();
                 } else if (bytesInBuffer - messageStart < MESSAGE_HEADER_BYTES + size) { //Full message is not contained in buffer but fits
-                    this.messageBuffer.position(bytesInBuffer);
+                    this.readBuffer.position(bytesInBuffer);
                     //Read rest of message
-                    if (!ByteBufferUtils.readAtLeastBlocking(channel, this.messageBuffer, messageStart + MESSAGE_HEADER_BYTES + size))
+                    if (!ByteBufferUtils.readAtLeastBlocking(channel, this.readBuffer, messageStart + MESSAGE_HEADER_BYTES + size))
                         return false;
-                    bytesInBuffer = this.messageBuffer.position();
+                    bytesInBuffer = this.readBuffer.position();
                 }
 
-                this.messageBuffer.position(messageStart + MESSAGE_HEADER_BYTES);
+                this.readBuffer.position(messageStart + MESSAGE_HEADER_BYTES);
 
                 RegisteredIncomingMessage registeredMessage = this.incomingMessages.get(id);
                 if (registeredMessage != null) {
                     IMessage message = registeredMessage.newInstance();
-                    message.read(this.messageBuffer);
+                    message.read(this.readBuffer);
                     messageBus.post(message);
                 }
 
                 messageStart += MESSAGE_HEADER_BYTES + size;
 
                 if (messageStart >= bytesInBuffer) {
-                    this.messageBuffer.position(0);
-                    bytesInBuffer = channel.read(this.messageBuffer);
+                    this.readBuffer.rewind();
+                    bytesInBuffer = channel.read(this.readBuffer);
                     messageStart = 0;
                     if (bytesInBuffer == 0) {
                         break;
@@ -189,6 +188,7 @@ public class DefaultMessageProcessor implements IMessageProcessor {
 
             return true;
         } catch (Throwable t) {
+            t.printStackTrace();
             return false;
         }
     }

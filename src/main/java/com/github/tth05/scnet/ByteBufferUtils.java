@@ -23,4 +23,18 @@ public class ByteBufferUtils {
             return false;
         }
     }
+
+    public static ByteBuffer moveToNewDirectBuffer(ByteBuffer oldBuffer, int newSize) {
+        ByteBuffer newBuffer = ByteBuffer.allocateDirect(newSize);
+        newBuffer.put(oldBuffer);
+        return newBuffer;
+    }
+
+    public static void moveToFrontAndClear(ByteBuffer buffer, int offset) {
+        byte[] tmp = new byte[buffer.limit() - offset];
+        buffer.position(offset);
+        buffer.get(tmp);
+        buffer.clear();
+        buffer.put(tmp);
+    }
 }
