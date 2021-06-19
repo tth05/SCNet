@@ -1,18 +1,18 @@
 package com.github.tth05.scnet.message.impl;
 
 import com.github.tth05.scnet.message.IMessage;
-
-import java.nio.ByteBuffer;
+import com.github.tth05.scnet.util.ByteBufferInputStream;
+import com.github.tth05.scnet.util.ByteBufferOutputStream;
 
 public class EmptyMessage implements IMessage {
 
     @Override
-    public void read(ByteBuffer messageByteBuffer) {
+    public void read(ByteBufferInputStream messageByteBuffer) {
         //NOOP
     }
 
     @Override
-    public void write(ByteBuffer messageByteBuffer) {
+    public void write(ByteBufferOutputStream messageByteBuffer) {
         //NOOP
     }
 }

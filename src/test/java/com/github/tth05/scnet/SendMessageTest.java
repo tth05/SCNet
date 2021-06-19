@@ -1,12 +1,12 @@
 package com.github.tth05.scnet;
 
 import com.github.tth05.scnet.message.IMessage;
+import com.github.tth05.scnet.util.ByteBufferInputStream;
+import com.github.tth05.scnet.util.ByteBufferOutputStream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.function.Executable;
 
-import java.nio.ByteBuffer;
-import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -28,24 +28,13 @@ public class SendMessageTest extends SCNetTest {
             s.getClient().getMessageProcessor().registerMessage((short) 1, IntMessage.class);
 
             //Listen for message
-            int c1 = 200000;
-            CountDownLatch l = new CountDownLatch(c1);
             AtomicInteger messagePayload = new AtomicInteger(-1);
-            long t = System.nanoTime();
             s.getClient().getMessageBus().listenAlways(IntMessage.class, (i) -> {
-                l.countDown();
                 messagePayload.set(i.i);
             });
 
             //Send message
-            for (int i = 0; i < c1; i++) {
-                c.getMessageProcessor().enqueueMessage(new IntMessage(number));
-            }
-            try {
-                l.await();
-            } catch (InterruptedException e) {
-            }
-            System.out.println((System.nanoTime() - t) / 1_000_000);
+            c.getMessageProcessor().enqueueMessage(new IntMessage(number));
             //Wait for message to arrive
             assertDoesNotThrow(() -> Thread.sleep(50));
             assertEquals(number, messagePayload.get());
@@ -64,7 +53,7 @@ public class SendMessageTest extends SCNetTest {
 
             //Listen for message
             AtomicInteger messagePayload = new AtomicInteger(-1);
-            CountDownLatch l = new CountDownLatch(20000);
+            CountDownLatch l = new CountDownLatch(100);
             s.getClient().getMessageBus().listenAlways(RandomDataMessage.class, (r) -> {
                 l.countDown();
             });
@@ -76,16 +65,15 @@ public class SendMessageTest extends SCNetTest {
             c.getMessageProcessor().enqueueMessage(new IntMessage(number));
 
             //Send message
-            for (int i = 0; i < 20000 - 1; i++) {
-//                    c.getMessageProcessor().enqueueMessage(new IntMessage(number));
-                c.getMessageProcessor().enqueueMessage(new RandomDataMessage());
+            for (int i = 0; i < 100 - 1; i++) {
+                if (Math.random() < 0.4) {
+                    c.getMessageProcessor().enqueueMessage(new IntMessage(number));
+                } else {
+                    c.getMessageProcessor().enqueueMessage(new RandomDataMessage());
+                }
             }
 
-            long t = System.nanoTime();
             assertDoesNotThrow((Executable) l::await);
-            System.out.println((System.nanoTime() - t) / 1_000_000d);
-
-            //Wait for message to arrive
             assertEquals(number, messagePayload.get());
         });
     }
@@ -102,36 +90,37 @@ public class SendMessageTest extends SCNetTest {
         }
 
         @Override
-        public void read(ByteBuffer messageByteBuffer) {
+        public void read(ByteBufferInputStream messageByteBuffer) {
             for (int j = 0; j < 10; j++) {
-                this.i = messageByteBuffer.getInt();
+                this.i = messageByteBuffer.readInt();
             }
-            this.i = messageByteBuffer.getInt();
+            this.i = messageByteBuffer.readInt();
         }
 
         @Override
-        public void write(ByteBuffer messageByteBuffer) {
+        public void write(ByteBufferOutputStream messageByteBuffer) {
             for (int j = 0; j < 10; j++) {
-                messageByteBuffer.putInt(69);
+                messageByteBuffer.writeInt(69);
             }
-            messageByteBuffer.putInt(i);
+            messageByteBuffer.writeInt(i);
         }
     }
 
     public static final class RandomDataMessage implements IMessage {
 
         @Override
-        public void read(ByteBuffer messageByteBuffer) {
-            int l = messageByteBuffer.getInt();
-            byte[] b = new byte[l];
-            messageByteBuffer.get(b);
+        public void read(ByteBufferInputStream messageByteBuffer) {
+            int l = messageByteBuffer.readInt();
+            String s = messageByteBuffer.readString();
+            assertEquals(l, s.length());
         }
 
         @Override
-        public void write(ByteBuffer messageByteBuffer) {
-            int l = ThreadLocalRandom.current().nextInt(75);
-            messageByteBuffer.putInt(l);
-            messageByteBuffer.put(IntStream.range(0, l).mapToObj(i -> "1").collect(Collectors.joining()).getBytes(StandardCharsets.UTF_8));
+        public void write(ByteBufferOutputStream messageByteBuffer) {
+            int l = ThreadLocalRandom.current().nextInt(5);
+            messageByteBuffer.writeInt(l);
+            String str = IntStream.range(0, l).mapToObj(i -> "1").collect(Collectors.joining());
+            messageByteBuffer.writeString(str);
         }
     }
 }

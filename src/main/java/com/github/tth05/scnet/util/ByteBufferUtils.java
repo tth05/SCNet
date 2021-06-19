@@ -1,4 +1,4 @@
-package com.github.tth05.scnet;
+package com.github.tth05.scnet.util;
 
 import java.nio.ByteBuffer;
 import java.nio.channels.SocketChannel;
@@ -26,6 +26,12 @@ public class ByteBufferUtils {
 
     public static ByteBuffer moveToNewDirectBuffer(ByteBuffer oldBuffer, int newSize) {
         ByteBuffer newBuffer = ByteBuffer.allocateDirect(newSize);
+        newBuffer.put(oldBuffer);
+        return newBuffer;
+    }
+
+    public static ByteBuffer moveToNewBuffer(ByteBuffer oldBuffer, int newSize) {
+        ByteBuffer newBuffer = ByteBuffer.allocate(newSize);
         newBuffer.put(oldBuffer);
         return newBuffer;
     }

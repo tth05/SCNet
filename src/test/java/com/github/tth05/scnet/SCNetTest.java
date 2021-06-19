@@ -14,7 +14,8 @@ public class SCNetTest {
             assertTrue(c.connect(new InetSocketAddress(6969)));
 
             //Wait for the server to accept the client
-            assertDoesNotThrow(() -> Thread.sleep(50));
+            while (s.getClient() == null)
+                assertDoesNotThrow(() -> Thread.sleep(50));
             consumer.accept(s, c);
         }
     }

@@ -1,6 +1,8 @@
 package com.github.tth05.scnet.message.impl;
 
-import com.github.tth05.scnet.ByteBufferUtils;
+import com.github.tth05.scnet.util.ByteBufferInputStream;
+import com.github.tth05.scnet.util.ByteBufferOutputStream;
+import com.github.tth05.scnet.util.ByteBufferUtils;
 import com.github.tth05.scnet.message.*;
 
 import java.io.IOException;
@@ -25,7 +27,8 @@ public class DefaultMessageProcessor implements IMessageProcessor {
 
     private final Queue<IMessage> outgoingMessageQueue = new ConcurrentLinkedDeque<>();
 
-    private ByteBuffer writeBuffer = ByteBuffer.allocateDirect(4096);
+    private ByteBuffer writeBuffer = ByteBuffer.allocateDirect(16384);
+    private ByteBuffer messageWriteBuffer = ByteBuffer.allocate(512);
     private ByteBuffer readBuffer = ByteBuffer.allocateDirect(4096);
 
     private int processLoopDelay = 5;
@@ -91,27 +94,40 @@ public class DefaultMessageProcessor implements IMessageProcessor {
     private void doWrite(SocketChannel channel) throws IOException {
         for (Iterator<IMessage> iterator = this.outgoingMessageQueue.iterator(); iterator.hasNext(); ) {
             IMessage message = iterator.next();
-            this.writeBuffer.clear();
-            this.writeBuffer.position(MESSAGE_HEADER_BYTES);
-            message.write(this.writeBuffer);
+            ByteBufferOutputStream messageOutStream = new ByteBufferOutputStream(this.messageWriteBuffer);
+            message.write(messageOutStream);
 
-            int size = this.writeBuffer.position() - MESSAGE_HEADER_BYTES;
+            //If the buffer increased in size, save the reference
+            if (this.messageWriteBuffer != messageOutStream.getBuffer()) {
+                this.messageWriteBuffer = messageOutStream.getBuffer();
+            }
+
+            int size = this.messageWriteBuffer.position();
             short messageId = this.outgoingMessages.getOrDefault(message.getClass(), (short) -1);
             if (messageId == -1)
                 throw new IllegalArgumentException("Message " + message.getClass() + " is not registered");
 
-            this.writeBuffer.position(0);
+            //If the current message doesn't fit into our writeBuffer, then flush it
+            if (this.writeBuffer.position() + MESSAGE_HEADER_BYTES + size > this.writeBuffer.capacity()) {
+                this.writeBuffer.flip();
+                while (this.writeBuffer.hasRemaining())
+                    channel.write(this.writeBuffer);
+                this.writeBuffer.clear();
+            }
+
+            //Append the packet to the writeBuffer
             this.writeBuffer.putShort(messageId);
             this.writeBuffer.putInt(size);
-            this.writeBuffer.position(this.writeBuffer.position() + size);
-
-            this.writeBuffer.flip();
-
-            while (this.writeBuffer.hasRemaining())
-                channel.write(this.writeBuffer);
+            this.messageWriteBuffer.flip();
+            this.writeBuffer.put(this.messageWriteBuffer);
 
             iterator.remove();
         }
+
+        this.writeBuffer.flip();
+        while (this.writeBuffer.hasRemaining())
+            channel.write(this.writeBuffer);
+        this.writeBuffer.clear();
     }
 
     private boolean doRead(SocketChannel channel, IMessageBus messageBus) {
@@ -165,22 +181,24 @@ public class DefaultMessageProcessor implements IMessageProcessor {
 
                 this.readBuffer.position(messageStart + MESSAGE_HEADER_BYTES);
 
+                //Process the message
                 RegisteredIncomingMessage registeredMessage = this.incomingMessages.get(id);
                 if (registeredMessage != null) {
                     IMessage message = registeredMessage.newInstance();
-                    message.read(this.readBuffer);
+                    message.read(new ByteBufferInputStream(this.readBuffer));
                     messageBus.post(message);
                 }
 
                 messageStart += MESSAGE_HEADER_BYTES + size;
 
+                //If we've processed everything that's currently in the buffer, read more or return
                 if (messageStart >= bytesInBuffer) {
                     this.readBuffer.rewind();
                     bytesInBuffer = channel.read(this.readBuffer);
                     messageStart = 0;
-                    if (bytesInBuffer == 0) {
+
+                    if (bytesInBuffer == 0)
                         break;
-                    }
                     if (bytesInBuffer == -1)
                         return false;
                 }
@@ -188,7 +206,6 @@ public class DefaultMessageProcessor implements IMessageProcessor {
 
             return true;
         } catch (Throwable t) {
-            t.printStackTrace();
             return false;
         }
     }
@@ -199,6 +216,26 @@ public class DefaultMessageProcessor implements IMessageProcessor {
 
     public int getProcessLoopDelay() {
         return processLoopDelay;
+    }
+
+    @Override
+    public void setWriteBufferSize(int size) {
+        this.writeBuffer = ByteBuffer.allocateDirect(size);
+    }
+
+    @Override
+    public int getWriteBufferSize() {
+        return this.writeBuffer.capacity();
+    }
+
+    @Override
+    public void setReadBufferSize(int size) {
+        this.readBuffer = ByteBuffer.allocateDirect(size);
+    }
+
+    @Override
+    public int getReadBufferSize() {
+        return this.readBuffer.capacity();
     }
 
     private static final class RegisteredIncomingMessage {

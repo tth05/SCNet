@@ -10,4 +10,16 @@ public interface IMessageProcessor {
     void enqueueMessage(IMessage message);
 
     boolean process(Selector selector, SocketChannel channel, IMessageBus messageBus);
+
+    void setProcessLoopDelay(int delay);
+
+    int getProcessLoopDelay();
+
+    void setWriteBufferSize(int size);
+
+    int getWriteBufferSize();
+
+    void setReadBufferSize(int size);
+
+    int getReadBufferSize();
 }

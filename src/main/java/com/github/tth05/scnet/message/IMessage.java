@@ -1,10 +1,11 @@
 package com.github.tth05.scnet.message;
 
-import java.nio.ByteBuffer;
+import com.github.tth05.scnet.util.ByteBufferInputStream;
+import com.github.tth05.scnet.util.ByteBufferOutputStream;
 
 public interface IMessage {
 
-    void read(ByteBuffer messageByteBuffer);
+    void read(ByteBufferInputStream messageByteBuffer);
 
-    void write(ByteBuffer messageByteBuffer);
+    void write(ByteBufferOutputStream messageByteBuffer);
 }
