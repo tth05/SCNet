@@ -3,6 +3,7 @@ package com.github.tth05.scnet;
 import com.github.tth05.scnet.message.IMessage;
 import com.github.tth05.scnet.util.ByteBufferInputStream;
 import com.github.tth05.scnet.util.ByteBufferOutputStream;
+import org.jetbrains.annotations.NotNull;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.function.Executable;
@@ -90,7 +91,7 @@ public class SendMessageTest extends SCNetTest {
         }
 
         @Override
-        public void read(ByteBufferInputStream messageByteBuffer) {
+        public void read(@NotNull ByteBufferInputStream messageByteBuffer) {
             for (int j = 0; j < 10; j++) {
                 this.i = messageByteBuffer.readInt();
             }
@@ -98,7 +99,7 @@ public class SendMessageTest extends SCNetTest {
         }
 
         @Override
-        public void write(ByteBufferOutputStream messageByteBuffer) {
+        public void write(@NotNull ByteBufferOutputStream messageByteBuffer) {
             for (int j = 0; j < 10; j++) {
                 messageByteBuffer.writeInt(69);
             }
@@ -109,14 +110,14 @@ public class SendMessageTest extends SCNetTest {
     public static final class RandomDataMessage implements IMessage {
 
         @Override
-        public void read(ByteBufferInputStream messageByteBuffer) {
+        public void read(@NotNull ByteBufferInputStream messageByteBuffer) {
             int l = messageByteBuffer.readInt();
             String s = messageByteBuffer.readString();
             assertEquals(l, s.length());
         }
 
         @Override
-        public void write(ByteBufferOutputStream messageByteBuffer) {
+        public void write(@NotNull ByteBufferOutputStream messageByteBuffer) {
             int l = ThreadLocalRandom.current().nextInt(5);
             messageByteBuffer.writeInt(l);
             String str = IntStream.range(0, l).mapToObj(i -> "1").collect(Collectors.joining());

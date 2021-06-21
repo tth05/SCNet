@@ -4,6 +4,7 @@ import com.github.tth05.scnet.message.IMessageBus;
 import com.github.tth05.scnet.message.IMessageProcessor;
 import com.github.tth05.scnet.message.impl.DefaultMessageBus;
 import com.github.tth05.scnet.message.impl.DefaultMessageProcessor;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -12,14 +13,22 @@ import java.nio.channels.Selector;
 import java.nio.channels.SocketChannel;
 import java.util.concurrent.locks.ReentrantLock;
 
+/**
+ * Base class for any client.
+ */
 public abstract class AbstractClient implements AutoCloseable {
 
+    @NotNull
     protected Selector selector;
+    @NotNull
     protected SocketChannel socketChannel;
 
+    @NotNull
     protected IMessageBus messageBus = new DefaultMessageBus();
+    @NotNull
     protected IMessageProcessor messageProcessor = new DefaultMessageProcessor();
 
+    @NotNull
     private final ReentrantLock selectorLock = new ReentrantLock();
 
     public AbstractClient() {

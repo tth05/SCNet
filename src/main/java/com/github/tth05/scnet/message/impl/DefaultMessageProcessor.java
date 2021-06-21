@@ -4,6 +4,8 @@ import com.github.tth05.scnet.util.ByteBufferInputStream;
 import com.github.tth05.scnet.util.ByteBufferOutputStream;
 import com.github.tth05.scnet.util.ByteBufferUtils;
 import com.github.tth05.scnet.message.*;
+import org.jetbrains.annotations.Contract;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.IOException;
 import java.lang.invoke.LambdaMetafactory;
@@ -18,19 +20,53 @@ import java.util.*;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.function.Supplier;
 
+/**
+ * A default implementation of {@link IMessageProcessor}.
+ */
 public class DefaultMessageProcessor implements IMessageProcessor {
 
-    private static final int MESSAGE_HEADER_BYTES = 6;
+    /**
+     * The length in bytes of each message header.
+     */
+    private static final int MESSAGE_HEADER_BYTES = Byte.BYTES * 6;
 
+    /**
+     * A map of registered incoming messages. The key is the id of the message.
+     */
+    @NotNull
     private final Map<Short, RegisteredIncomingMessage> incomingMessages = new HashMap<>();
+    /**
+     * A map of registered outgoing messages. The key is the message class, and the value is the id for that message.
+     */
+    @NotNull
     private final Map<Class<? extends IMessage>, Short> outgoingMessages = new HashMap<>();
 
+    /**
+     * A queue containing all messages which are queued for sending.
+     */
+    @NotNull
     private final Queue<IMessage> outgoingMessageQueue = new ConcurrentLinkedDeque<>();
 
+    /**
+     * A buffer for messages to allow for batch writing of multiple queued messages.
+     */
+    @NotNull
     private ByteBuffer writeBuffer = ByteBuffer.allocateDirect(16384);
+    /**
+     * A buffer into which a single message is written. The data of this buffer is then transferred into
+     * {@link #writeBuffer}.
+     */
+    @NotNull
     private ByteBuffer messageWriteBuffer = ByteBuffer.allocate(512);
+    /**
+     * A buffer used for batch reading.
+     */
+    @NotNull
     private ByteBuffer readBuffer = ByteBuffer.allocateDirect(4096);
 
+    /**
+     * @see #getProcessLoopDelay()
+     */
     private int processLoopDelay = 5;
 
     public DefaultMessageProcessor() {
@@ -40,9 +76,11 @@ public class DefaultMessageProcessor implements IMessageProcessor {
     }
 
     @Override
-    public <T extends IMessage> void registerMessage(short id, Class<T> messageClass) {
+    public <T extends IMessage> void registerMessage(short id, @NotNull Class<T> messageClass) {
         if (id < 1)
             throw new IllegalArgumentException("id has to be greater than zero");
+        if (this.incomingMessages.containsKey(id) || this.outgoingMessages.containsKey(id))
+            throw new IllegalArgumentException("message with id " + id + " is already registered");
 
         if (IMessageIncoming.class.isAssignableFrom(messageClass)) {
             this.incomingMessages.put(id, new RegisteredIncomingMessage(messageClass));
@@ -57,12 +95,12 @@ public class DefaultMessageProcessor implements IMessageProcessor {
     }
 
     @Override
-    public void enqueueMessage(IMessage message) {
+    public void enqueueMessage(@NotNull IMessage message) {
         this.outgoingMessageQueue.offer(message);
     }
 
     @Override
-    public boolean process(Selector selector, SocketChannel channel, IMessageBus messageBus) {
+    public boolean process(@NotNull Selector selector, @NotNull SocketChannel channel, @NotNull IMessageBus messageBus) {
         try {
             Thread.sleep(this.processLoopDelay);
 
@@ -91,6 +129,12 @@ public class DefaultMessageProcessor implements IMessageProcessor {
         }
     }
 
+    /**
+     * Writes all queued messages in batches to the given {@code channel}.
+     *
+     * @param channel the channel to write to
+     * @throws IOException if any write operation failed
+     */
     private void doWrite(SocketChannel channel) throws IOException {
         for (Iterator<IMessage> iterator = this.outgoingMessageQueue.iterator(); iterator.hasNext(); ) {
             IMessage message = iterator.next();
@@ -130,6 +174,14 @@ public class DefaultMessageProcessor implements IMessageProcessor {
         this.writeBuffer.clear();
     }
 
+    /**
+     * Reads all available messages from the given {@code channel} and {@link IMessageBus#post(IMessage)}s them.
+     *
+     * @param channel    the channel to read from
+     * @param messageBus the {@link IMessageBus} which should handle incoming messages
+     * @return {@code false} if something went wrong during reading, and further reading may not be possible;
+     * {@code true} otherwise
+     */
     private boolean doRead(SocketChannel channel, IMessageBus messageBus) {
         try {
             this.readBuffer.clear();
@@ -206,6 +258,7 @@ public class DefaultMessageProcessor implements IMessageProcessor {
 
             return true;
         } catch (Throwable t) {
+            t.printStackTrace();
             return false;
         }
     }
@@ -238,11 +291,15 @@ public class DefaultMessageProcessor implements IMessageProcessor {
         return this.readBuffer.capacity();
     }
 
+    /**
+     * Wrapper class around incoming messages.
+     */
     private static final class RegisteredIncomingMessage {
 
+        @NotNull
         private final Supplier<? extends IMessage> instanceSupplier;
 
-        private RegisteredIncomingMessage(Class<? extends IMessage> messageClass) {
+        private RegisteredIncomingMessage(@NotNull Class<? extends IMessage> messageClass) {
             try {
                 MethodHandles.Lookup lookup = MethodHandles.lookup();
                 MethodHandle constructorHandle = lookup.findConstructor(messageClass, MethodType.methodType(void.class));
@@ -253,10 +310,15 @@ public class DefaultMessageProcessor implements IMessageProcessor {
                         constructorHandle.type().generic(), constructorHandle, constructorHandle.type()
                 ).getTarget().invokeExact();
             } catch (Throwable e) {
-                throw new IllegalArgumentException("Unable to create lambda factory for constructor", e);
+                throw new IllegalArgumentException("Unable to create lambda factory for constructor. Make sure a default constructor exists", e);
             }
         }
 
+        /**
+         * @return a new instance of the wrapped message class
+         */
+        @NotNull
+        @Contract(value = "-> new", pure = true)
         public IMessage newInstance() {
             return this.instanceSupplier.get();
         }
