@@ -12,28 +12,28 @@ public class ConnectionTest extends SCNetTest {
 
     @Test
     public void testConnectClientToServer() {
-        withClientAndServer((s, c) -> assertNotNull(s.getClient()));
+        withClientAndServer((s, c) -> assertNotNull(getClientFromServer(s)));
     }
 
     @Test
     public void testIsConnected() {
         //Disconnect from server side
         withClientAndServer((s, c) -> {
-            assertTrue(s.getClient().isConnected());
+            assertTrue(s.isClientConnected());
             assertTrue(c.isConnected());
-            s.getClient().close();
+            s.closeClient();
             assertDoesNotThrow(() -> Thread.sleep(50));
-            assertNull(s.getClient());
+            assertNull(getClientFromServer(s));
             assertFalse(c.isConnected());
         });
 
         //Disconnect from client side
         withClientAndServer((s, c) -> {
-            assertTrue(s.getClient().isConnected());
+            assertTrue(s.isClientConnected());
             assertTrue(c.isConnected());
             c.close();
             assertDoesNotThrow(() -> Thread.sleep(50));
-            assertNull(s.getClient());
+            assertNull(getClientFromServer(s));
             assertFalse(c.isConnected());
         });
     }
@@ -48,8 +48,8 @@ public class ConnectionTest extends SCNetTest {
             assertTrue(c2.isConnected());
             //Wait for server to accept new client
             assertDoesNotThrow(() -> Thread.sleep(50));
-            assertNotNull(s.getClient());
-            assertTrue(s.getClient().isConnected());
+            assertNotNull(getClientFromServer(s));
+            assertTrue(s.isClientConnected());
         });
 
         withClientAndServer((s, c) -> {
@@ -59,12 +59,12 @@ public class ConnectionTest extends SCNetTest {
             //Second client can't connect
             assertFalse(c2.isConnected());
             //Disconnect first client
-            s.getClient().close();
+            s.closeClient();
 
             assertTrue(c.connect(new InetSocketAddress(6969)));
             //Wait for server to accept new client
             assertDoesNotThrow(() -> Thread.sleep(50));
-            assertNotNull(s.getClient());
+            assertNotNull(getClientFromServer(s));
         });
     }
 }

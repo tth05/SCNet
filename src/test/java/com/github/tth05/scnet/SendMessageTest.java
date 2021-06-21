@@ -25,11 +25,11 @@ public class SendMessageTest extends SCNetTest {
         withClientAndServer((s, c) -> {
             //Register message
             c.getMessageProcessor().registerMessage((short) 1, IntMessage.class);
-            s.getClient().getMessageProcessor().registerMessage((short) 1, IntMessage.class);
+            s.getMessageProcessor().registerMessage((short) 1, IntMessage.class);
 
             //Listen for message
             AtomicInteger messagePayload = new AtomicInteger(-1);
-            s.getClient().getMessageBus().listenAlways(IntMessage.class, (i) -> {
+            s.getMessageBus().listenAlways(IntMessage.class, (i) -> {
                 messagePayload.set(i.i);
             });
 
@@ -47,17 +47,17 @@ public class SendMessageTest extends SCNetTest {
         withClientAndServer((s, c) -> {
             //Register message
             c.getMessageProcessor().registerMessage((short) 1, IntMessage.class);
-            s.getClient().getMessageProcessor().registerMessage((short) 1, IntMessage.class);
+            s.getMessageProcessor().registerMessage((short) 1, IntMessage.class);
             c.getMessageProcessor().registerMessage((short) 2, RandomDataMessage.class);
-            s.getClient().getMessageProcessor().registerMessage((short) 2, RandomDataMessage.class);
+            s.getMessageProcessor().registerMessage((short) 2, RandomDataMessage.class);
 
             //Listen for message
             AtomicInteger messagePayload = new AtomicInteger(-1);
             CountDownLatch l = new CountDownLatch(100);
-            s.getClient().getMessageBus().listenAlways(RandomDataMessage.class, (r) -> {
+            s.getMessageBus().listenAlways(RandomDataMessage.class, (r) -> {
                 l.countDown();
             });
-            s.getClient().getMessageBus().listenAlways(IntMessage.class, (i) -> {
+            s.getMessageBus().listenAlways(IntMessage.class, (i) -> {
                 messagePayload.set(i.i);
                 l.countDown();
             });

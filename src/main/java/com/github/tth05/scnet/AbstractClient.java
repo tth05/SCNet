@@ -55,7 +55,7 @@ public abstract class AbstractClient implements AutoCloseable {
             } catch (InterruptedException ignored) {}
         }
 
-        //Prevent close call while we're doing this
+        //Prevent #close call while we're doing this
         this.selectorLock.lock();
         if (!this.selector.isOpen()) {
             this.selectorLock.unlock();

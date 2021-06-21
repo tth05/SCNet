@@ -1,5 +1,10 @@
 package com.github.tth05.scnet;
 
+import com.github.tth05.scnet.message.IMessageBus;
+import com.github.tth05.scnet.message.IMessageProcessor;
+import com.github.tth05.scnet.message.impl.DefaultMessageBus;
+import com.github.tth05.scnet.message.impl.DefaultMessageProcessor;
+
 import java.io.IOException;
 import java.net.SocketAddress;
 import java.nio.channels.ClosedSelectorException;
@@ -15,6 +20,9 @@ import java.util.concurrent.TimeUnit;
 public class Server implements AutoCloseable {
 
     private final Executor executor;
+
+    private IMessageBus messageBus = new DefaultMessageBus();
+    private IMessageProcessor messageProcessor = new DefaultMessageProcessor();
 
     private final Selector selector;
     private final ServerSocketChannel serverSocketChannel;
@@ -81,9 +89,13 @@ public class Server implements AutoCloseable {
                     if (!hasClient)
                         this.client = null;
 
-                    if (!hasClient) {
-                        this.client = new ServerClient(this.serverSocketChannel.accept());
-                    } else {
+                    if (!hasClient) { //Accept a new client
+                        this.client = new ServerClient(
+                                this.serverSocketChannel.accept(),
+                                getMessageProcessor(),
+                                getMessageBus()
+                        );
+                    } else { //Block other clients trying to connect
                         this.serverSocketChannel.accept().close();
                     }
                 } else {
@@ -96,8 +108,13 @@ public class Server implements AutoCloseable {
         }
     }
 
-    public ServerClient getClient() {
-        return client;
+    public boolean isClientConnected() {
+        return this.client != null && this.client.isConnected();
+    }
+
+    public void closeClient() {
+        if (this.client != null)
+            this.client.close();
     }
 
     @Override
@@ -108,5 +125,21 @@ public class Server implements AutoCloseable {
         } catch (IOException e) {
             e.printStackTrace();
         }
+    }
+
+    public void setMessageProcessor(IMessageProcessor messageProcessor) {
+        this.messageProcessor = messageProcessor;
+    }
+
+    public void setMessageBus(IMessageBus messageBus) {
+        this.messageBus = messageBus;
+    }
+
+    public IMessageProcessor getMessageProcessor() {
+        return messageProcessor;
+    }
+
+    public IMessageBus getMessageBus() {
+        return messageBus;
     }
 }
