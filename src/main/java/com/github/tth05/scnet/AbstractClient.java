@@ -5,6 +5,7 @@ import com.github.tth05.scnet.message.IMessageProcessor;
 import com.github.tth05.scnet.message.impl.DefaultMessageBus;
 import com.github.tth05.scnet.message.impl.DefaultMessageProcessor;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -18,16 +19,32 @@ import java.util.concurrent.locks.ReentrantLock;
  */
 public abstract class AbstractClient implements AutoCloseable {
 
+    /**
+     * Selector used to check for {@link SelectionKey#OP_CONNECT}, {@link SelectionKey#OP_READ} and
+     * {@link SelectionKey#OP_WRITE}.
+     */
     @NotNull
     protected Selector selector;
+    /**
+     * Internal socket channel used for the connection
+     */
     @NotNull
     protected SocketChannel socketChannel;
 
+    /**
+     * The message bus
+     */
     @NotNull
     protected IMessageBus messageBus = new DefaultMessageBus();
+    /**
+     * The message processor
+     */
     @NotNull
     protected IMessageProcessor messageProcessor = new DefaultMessageProcessor();
 
+    /**
+     * A lock to prevent {@link #close()}ing the selector and channel while the {@link #process()} loop is working.
+     */
     @NotNull
     private final ReentrantLock selectorLock = new ReentrantLock();
 
@@ -35,11 +52,19 @@ public abstract class AbstractClient implements AutoCloseable {
         this(null);
     }
 
-    public AbstractClient(SocketChannel socketChannel) {
+    public AbstractClient(@Nullable SocketChannel socketChannel) {
         initChannelAndSelector(socketChannel);
     }
 
-    protected void initChannelAndSelector(SocketChannel socketChannel) {
+    /**
+     * Initializes the {@link #selector} and the {@link #socketChannel}. If the {@code socketChannel} parameter is null,
+     * a new channel is opened.
+     * <br>
+     * This method is used when connecting because a {@link SocketChannel} cannot be bound to a different address.
+     *
+     * @param socketChannel a pre-existing {@link SocketChannel} to use
+     */
+    protected void initChannelAndSelector(@Nullable SocketChannel socketChannel) {
         try {
             this.selector = Selector.open();
 
@@ -55,6 +80,12 @@ public abstract class AbstractClient implements AutoCloseable {
         }
     }
 
+    /**
+     * Wrapper method for {@link IMessageProcessor#process(Selector, SocketChannel, IMessageBus)} which includes a lock
+     * to prevent calls to {@link #close()} while messages are being processed.
+     *
+     * @return same as {@link IMessageProcessor#process(Selector, SocketChannel, IMessageBus)}
+     */
     protected boolean process() {
         //Allow other threads to acquire this lock before us. The while loop in the Client won't allow other threads to
         // acquire this lock
@@ -102,18 +133,20 @@ public abstract class AbstractClient implements AutoCloseable {
         }
     }
 
-    public void setMessageProcessor(IMessageProcessor messageProcessor) {
+    public void setMessageProcessor(@NotNull IMessageProcessor messageProcessor) {
         this.messageProcessor = messageProcessor;
     }
 
-    public void setMessageBus(IMessageBus messageBus) {
+    public void setMessageBus(@NotNull IMessageBus messageBus) {
         this.messageBus = messageBus;
     }
 
+    @NotNull
     public IMessageProcessor getMessageProcessor() {
         return messageProcessor;
     }
 
+    @NotNull
     public IMessageBus getMessageBus() {
         return messageBus;
     }

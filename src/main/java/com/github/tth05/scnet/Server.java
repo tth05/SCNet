@@ -4,6 +4,8 @@ import com.github.tth05.scnet.message.IMessageBus;
 import com.github.tth05.scnet.message.IMessageProcessor;
 import com.github.tth05.scnet.message.impl.DefaultMessageBus;
 import com.github.tth05.scnet.message.impl.DefaultMessageProcessor;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.IOException;
 import java.net.SocketAddress;
@@ -19,14 +21,36 @@ import java.util.concurrent.TimeUnit;
 
 public class Server implements AutoCloseable {
 
+    /**
+     * The executor on which the server thread will run
+     */
+    @NotNull
     private final Executor executor;
 
+    /**
+     * The message bus
+     */
+    @NotNull
     private IMessageBus messageBus = new DefaultMessageBus();
+    /**
+     * The message processor
+     */
+    @NotNull
     private IMessageProcessor messageProcessor = new DefaultMessageProcessor();
 
+    /**
+     * Selector used to check for {@link SelectionKey#OP_ACCEPT}.
+     */
     private final Selector selector;
+    /**
+     * Internal socket channel used to accept clients
+     */
     private final ServerSocketChannel serverSocketChannel;
 
+    /**
+     * The currently connected client
+     */
+    @Nullable
     private ServerClient client;
 
     public Server() {
@@ -39,7 +63,11 @@ public class Server implements AutoCloseable {
         }));
     }
 
-    public Server(Executor executor) {
+    /**
+     * @param executor an executor on which the server thread will run. This executor needs to have one available
+     *                 thread.
+     */
+    public Server(@NotNull Executor executor) {
         this.executor = executor;
         try {
             this.selector = Selector.open();
@@ -51,6 +79,11 @@ public class Server implements AutoCloseable {
         }
     }
 
+    /**
+     * Binds this server to the given {@code address} and starts listening for clients.
+     *
+     * @param address the address to bind this server to
+     */
     public void bind(SocketAddress address) {
         try {
             this.serverSocketChannel.bind(address, 1);
@@ -70,6 +103,10 @@ public class Server implements AutoCloseable {
         });
     }
 
+    /**
+     * Queries this {@link #selector} for {@link SelectionKey#OP_ACCEPT} and accepts any new clients. If the connection
+     * with the current client is still open, any new clients trying to connect will get their connection closed.
+     */
     private void acceptClient() {
         if (!this.selector.isOpen())
             return;
@@ -108,10 +145,16 @@ public class Server implements AutoCloseable {
         }
     }
 
+    /**
+     * @return {@code true} if a client is connected and the connection is open; {@code false} otherwise
+     */
     public boolean isClientConnected() {
         return this.client != null && this.client.isConnected();
     }
 
+    /**
+     * Closes the connection to the current client
+     */
     public void closeClient() {
         if (this.client != null)
             this.client.close();
@@ -127,18 +170,20 @@ public class Server implements AutoCloseable {
         }
     }
 
-    public void setMessageProcessor(IMessageProcessor messageProcessor) {
+    public void setMessageProcessor(@NotNull IMessageProcessor messageProcessor) {
         this.messageProcessor = messageProcessor;
     }
 
-    public void setMessageBus(IMessageBus messageBus) {
+    public void setMessageBus(@NotNull IMessageBus messageBus) {
         this.messageBus = messageBus;
     }
 
+    @NotNull
     public IMessageProcessor getMessageProcessor() {
         return messageProcessor;
     }
 
+    @NotNull
     public IMessageBus getMessageBus() {
         return messageBus;
     }
