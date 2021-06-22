@@ -15,7 +15,7 @@ repositories {
 }
 
 dependencies {
-    implementation 'com.github.tth05:SCNet:1.0.0'
+    implementation 'com.github.tth05:SCNet:master-SNAPSHOT'
 }
 ```
 
