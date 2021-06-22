@@ -1,9 +1,7 @@
-
 # SCNet
 
-Java SocketChannel wrapper library for one-to-one connections with custom message packets.
+**S***ingle***C***lient***Net** is a Java SocketChannel wrapper library for one-to-one connections with custom message packets.
 This is mostly meant for two local applications that want to communicate with each other.
-
 
 ## Installation
 
@@ -69,4 +67,3 @@ Now you can send the message and receive it.
 client.getMessageBus().listenAlways(RandomDataMessage.class, (message) -> System.out.println(message.getString())
 server.getMessageProcessor().enqueueMessage(new RandomDataMessage("Cool!"));
 ```
-
