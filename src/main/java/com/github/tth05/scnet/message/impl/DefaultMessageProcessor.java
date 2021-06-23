@@ -39,13 +39,13 @@ public class DefaultMessageProcessor implements IMessageProcessor {
      * A map of registered outgoing messages. The key is the message class, and the value is the id for that message.
      */
     @NotNull
-    private final Map<Class<? extends IMessage>, Short> outgoingMessages = new HashMap<>();
+    private final Map<Class<? extends AbstractMessage>, Short> outgoingMessages = new HashMap<>();
 
     /**
      * A queue containing all messages which are queued for sending.
      */
     @NotNull
-    private final Queue<IMessage> outgoingMessageQueue = new ConcurrentLinkedDeque<>();
+    private final Queue<AbstractMessage> outgoingMessageQueue = new ConcurrentLinkedDeque<>();
 
     /**
      * A buffer for messages to allow for batch writing of multiple queued messages.
@@ -76,17 +76,17 @@ public class DefaultMessageProcessor implements IMessageProcessor {
     }
 
     @Override
-    public <T extends IMessage> void registerMessage(short id, @NotNull Class<T> messageClass) {
+    public <T extends AbstractMessage> void registerMessage(short id, @NotNull Class<T> messageClass) {
         if (id < 1)
             throw new IllegalArgumentException("id has to be greater than zero");
         if (this.incomingMessages.containsKey(id) || this.outgoingMessages.containsKey(id))
             throw new IllegalArgumentException("message with id " + id + " is already registered");
 
-        if (IMessageIncoming.class.isAssignableFrom(messageClass)) {
+        if (AbstractMessageIncoming.class.isAssignableFrom(messageClass)) {
             this.incomingMessages.put(id, new RegisteredIncomingMessage(messageClass));
-        } else if (IMessageOutgoing.class.isAssignableFrom(messageClass)) {
+        } else if (AbstractMessageOutgoing.class.isAssignableFrom(messageClass)) {
             this.outgoingMessages.put(messageClass, id);
-        } else if (IMessage.class.isAssignableFrom(messageClass)) {
+        } else if (AbstractMessage.class.isAssignableFrom(messageClass)) {
             this.incomingMessages.put(id, new RegisteredIncomingMessage(messageClass));
             this.outgoingMessages.put(messageClass, id);
         } else {
@@ -95,7 +95,7 @@ public class DefaultMessageProcessor implements IMessageProcessor {
     }
 
     @Override
-    public void enqueueMessage(@NotNull IMessage message) {
+    public void enqueueMessage(@NotNull AbstractMessage message) {
         this.outgoingMessageQueue.offer(message);
     }
 
@@ -136,8 +136,8 @@ public class DefaultMessageProcessor implements IMessageProcessor {
      * @throws IOException if any write operation failed
      */
     private void doWrite(SocketChannel channel) throws IOException {
-        for (Iterator<IMessage> iterator = this.outgoingMessageQueue.iterator(); iterator.hasNext(); ) {
-            IMessage message = iterator.next();
+        for (Iterator<AbstractMessage> iterator = this.outgoingMessageQueue.iterator(); iterator.hasNext(); ) {
+            AbstractMessage message = iterator.next();
             ByteBufferOutputStream messageOutStream = new ByteBufferOutputStream(this.messageWriteBuffer);
             message.write(messageOutStream);
 
@@ -175,7 +175,7 @@ public class DefaultMessageProcessor implements IMessageProcessor {
     }
 
     /**
-     * Reads all available messages from the given {@code channel} and {@link IMessageBus#post(IMessage)}s them.
+     * Reads all available messages from the given {@code channel} and {@link IMessageBus#post(AbstractMessage)}s them.
      *
      * @param channel    the channel to read from
      * @param messageBus the {@link IMessageBus} which should handle incoming messages
@@ -236,7 +236,7 @@ public class DefaultMessageProcessor implements IMessageProcessor {
                 //Process the message
                 RegisteredIncomingMessage registeredMessage = this.incomingMessages.get(id);
                 if (registeredMessage != null) {
-                    IMessage message = registeredMessage.newInstance();
+                    AbstractMessage message = registeredMessage.newInstance();
                     message.read(new ByteBufferInputStream(this.readBuffer));
                     messageBus.post(message);
                 }
@@ -297,14 +297,14 @@ public class DefaultMessageProcessor implements IMessageProcessor {
     private static final class RegisteredIncomingMessage {
 
         @NotNull
-        private final Supplier<? extends IMessage> instanceSupplier;
+        private final Supplier<? extends AbstractMessage> instanceSupplier;
 
-        private RegisteredIncomingMessage(@NotNull Class<? extends IMessage> messageClass) {
+        private RegisteredIncomingMessage(@NotNull Class<? extends AbstractMessage> messageClass) {
             try {
                 MethodHandles.Lookup lookup = MethodHandles.lookup();
                 MethodHandle constructorHandle = lookup.findConstructor(messageClass, MethodType.methodType(void.class));
                 //noinspection unchecked
-                this.instanceSupplier = (Supplier<? extends IMessage>) LambdaMetafactory.metafactory(
+                this.instanceSupplier = (Supplier<? extends AbstractMessage>) LambdaMetafactory.metafactory(
                         lookup,
                         "get", MethodType.methodType(Supplier.class),
                         constructorHandle.type().generic(), constructorHandle, constructorHandle.type()
@@ -319,7 +319,7 @@ public class DefaultMessageProcessor implements IMessageProcessor {
          */
         @NotNull
         @Contract(value = "-> new", pure = true)
-        public IMessage newInstance() {
+        public AbstractMessage newInstance() {
             return this.instanceSupplier.get();
         }
     }

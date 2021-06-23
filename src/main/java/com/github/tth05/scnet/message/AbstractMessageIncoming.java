@@ -1,16 +1,15 @@
 package com.github.tth05.scnet.message;
 
-import com.github.tth05.scnet.util.ByteBufferInputStream;
 import com.github.tth05.scnet.util.ByteBufferOutputStream;
+import org.jetbrains.annotations.NotNull;
 
 /**
  * A simple helper class for messages which can only be read and not written.
  */
-public interface IMessageIncoming extends IMessage {
+public abstract class AbstractMessageIncoming extends AbstractMessage {
 
-    default void write(ByteBufferInputStream messageByteBuffer) {
+    @Override
+    public void write(@NotNull ByteBufferOutputStream messageByteBuffer) {
         throw new UnsupportedOperationException();
     }
-
-    void read(ByteBufferOutputStream messageByteBuffer);
 }

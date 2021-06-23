@@ -25,7 +25,7 @@ public interface IMessageProcessor {
      * @throws IllegalArgumentException if the given {@code id} is smaller than 1 or there already is a message
      *                                  registered with the given id.
      */
-    <T extends IMessage> void registerMessage(short id, @NotNull Class<T> messageClass);
+    <T extends AbstractMessage> void registerMessage(short id, @NotNull Class<T> messageClass);
 
     /**
      * Enqueues a message to be sent at some point in the future. If a non-registered message is enqueued,
@@ -33,7 +33,7 @@ public interface IMessageProcessor {
      *
      * @param message the message to enqueue
      */
-    void enqueueMessage(@NotNull IMessage message);
+    void enqueueMessage(@NotNull AbstractMessage message);
 
     /**
      * This method will write all enqueued messages to the {@code channel} and then read all available messages and

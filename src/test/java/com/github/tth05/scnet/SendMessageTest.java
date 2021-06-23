@@ -1,6 +1,6 @@
 package com.github.tth05.scnet;
 
-import com.github.tth05.scnet.message.IMessage;
+import com.github.tth05.scnet.message.AbstractMessage;
 import com.github.tth05.scnet.util.ByteBufferInputStream;
 import com.github.tth05.scnet.util.ByteBufferOutputStream;
 import org.jetbrains.annotations.NotNull;
@@ -79,7 +79,7 @@ public class SendMessageTest extends SCNetTest {
         });
     }
 
-    public static final class IntMessage implements IMessage {
+    public static final class IntMessage extends AbstractMessage {
 
         private int i;
 
@@ -107,7 +107,7 @@ public class SendMessageTest extends SCNetTest {
         }
     }
 
-    public static final class RandomDataMessage implements IMessage {
+    public static final class RandomDataMessage extends AbstractMessage {
 
         @Override
         public void read(@NotNull ByteBufferInputStream messageByteBuffer) {

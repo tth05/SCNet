@@ -7,7 +7,7 @@ import org.jetbrains.annotations.NotNull;
 /**
  * The base class for any message which can be sent or received over the network.
  */
-public interface IMessage {
+public abstract class AbstractMessage {
 
     /**
      * Called when a message of this type arrives. Read all data here. This should match the data that is written in
@@ -20,7 +20,7 @@ public interface IMessage {
      *
      * @param messageByteBuffer the input stream to read from
      */
-    void read(@NotNull ByteBufferInputStream messageByteBuffer);
+    public abstract void read(@NotNull ByteBufferInputStream messageByteBuffer);
 
     /**
      * Called when a message of this type is being sent. Write all data here. This should match the data that is read in
@@ -33,5 +33,5 @@ public interface IMessage {
      *
      * @param messageByteBuffer the output stream to write to
      */
-    void write(@NotNull ByteBufferOutputStream messageByteBuffer);
+    public abstract void write(@NotNull ByteBufferOutputStream messageByteBuffer);
 }

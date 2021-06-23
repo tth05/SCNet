@@ -16,18 +16,18 @@ public interface IMessageBus {
      * @param messageClass the class of the message to receive events for
      * @param listener     the listener
      */
-    <T extends IMessage> void listenAlways(@NotNull Class<T> messageClass, @NotNull Consumer<T> listener);
+    <T extends AbstractMessage> void listenAlways(@NotNull Class<T> messageClass, @NotNull Consumer<T> listener);
 
     /**
      * Behaves like {@link #listenAlways(Class, Consumer)}, but the {@code listener} will unregistered after receiving a
      * single message.
      */
-    <T extends IMessage> void listenOnce(@NotNull Class<T> messageClass, @NotNull Consumer<T> listener);
+    <T extends AbstractMessage> void listenOnce(@NotNull Class<T> messageClass, @NotNull Consumer<T> listener);
 
     /**
      * Posts a message to this bus and distributes it to all listeners. Should be called by a {@link IMessageProcessor}.
      *
      * @param message the message
      */
-    void post(@NotNull IMessage message);
+    void post(@NotNull AbstractMessage message);
 }

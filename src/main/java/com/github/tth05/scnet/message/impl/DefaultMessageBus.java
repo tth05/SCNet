@@ -1,6 +1,6 @@
 package com.github.tth05.scnet.message.impl;
 
-import com.github.tth05.scnet.message.IMessage;
+import com.github.tth05.scnet.message.AbstractMessage;
 import com.github.tth05.scnet.message.IMessageBus;
 import org.jetbrains.annotations.NotNull;
 
@@ -19,17 +19,17 @@ public class DefaultMessageBus implements IMessageBus {
     private final Map<Class<?>, List<RegisteredListener>> listeners = new HashMap<>();
 
     @Override
-    public <T extends IMessage> void listenAlways(@NotNull Class<T> messageClass, @NotNull Consumer<T> listener) {
+    public <T extends AbstractMessage> void listenAlways(@NotNull Class<T> messageClass, @NotNull Consumer<T> listener) {
         this.listeners.computeIfAbsent(messageClass, (c) -> new ArrayList<>()).add(new RegisteredListener(false, listener));
     }
 
     @Override
-    public <T extends IMessage> void listenOnce(@NotNull Class<T> messageClass, @NotNull Consumer<T> listener) {
+    public <T extends AbstractMessage> void listenOnce(@NotNull Class<T> messageClass, @NotNull Consumer<T> listener) {
         this.listeners.computeIfAbsent(messageClass, (c) -> new ArrayList<>()).add(new RegisteredListener(true, listener));
     }
 
     @Override
-    public void post(@NotNull IMessage message) {
+    public void post(@NotNull AbstractMessage message) {
         for (Iterator<RegisteredListener> iterator = this.listeners.getOrDefault(message.getClass(), Collections.emptyList()).iterator(); iterator.hasNext(); ) {
             RegisteredListener listener = iterator.next();
 
