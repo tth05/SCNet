@@ -12,12 +12,12 @@ import org.jetbrains.annotations.NotNull;
 public class EmptyMessage extends AbstractMessage {
 
     @Override
-    public void read(@NotNull ByteBufferInputStream messageByteBuffer) {
+    public void read(@NotNull ByteBufferInputStream messageStream) {
         //NOOP
     }
 
     @Override
-    public void write(@NotNull ByteBufferOutputStream messageByteBuffer) {
+    public void write(@NotNull ByteBufferOutputStream messageStream) {
         //NOOP
     }
 }

@@ -9,7 +9,7 @@ import org.jetbrains.annotations.NotNull;
 public abstract class AbstractMessageOutgoing extends AbstractMessage {
 
     @Override
-    public void read(@NotNull ByteBufferInputStream messageByteBuffer) {
+    public void read(@NotNull ByteBufferInputStream messageStream) {
         throw new UnsupportedOperationException();
     }
 }

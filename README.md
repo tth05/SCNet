@@ -31,7 +31,7 @@ try (Server s = new Server(); Client c = new Client()) {
 
 To send messages, you first need to create a message class for each message you want to send or receive.
 ```java
-class StringMessage implements IMessage /* IMessageIncoming, IMessageOutgoing */ {
+class StringMessage extends AbstractMessage /* AbstractMessageIncoming, AbstractMessageOutgoing */ {
 
     private String s;
 
@@ -43,13 +43,13 @@ class StringMessage implements IMessage /* IMessageIncoming, IMessageOutgoing */
     }
 
     @Override
-    public void read(@NotNull ByteBufferInputStream messageByteBuffer) {
-        this.s = messageByteBuffer.readString();        
+    public void read(@NotNull ByteBufferInputStream messageStream) {
+        this.s = messageStream.readString();        
     }
 
     @Override
-    public void write(@NotNull ByteBufferOutputStream messageByteBuffer) {
-        messageByteBuffer.writeString(this.s);
+    public void write(@NotNull ByteBufferOutputStream messageStream) {
+        messageStream.writeString(this.s);
     }
 
     public String getString() {

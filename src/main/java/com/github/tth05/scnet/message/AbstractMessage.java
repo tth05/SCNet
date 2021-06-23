@@ -18,9 +18,9 @@ public abstract class AbstractMessage {
      * <strong>read:</strong><br>
      * readInt, readInt, readShort, readByte
      *
-     * @param messageByteBuffer the input stream to read from
+     * @param messageStream the input stream to read from
      */
-    public abstract void read(@NotNull ByteBufferInputStream messageByteBuffer);
+    public abstract void read(@NotNull ByteBufferInputStream messageStream);
 
     /**
      * Called when a message of this type is being sent. Write all data here. This should match the data that is read in
@@ -31,7 +31,7 @@ public abstract class AbstractMessage {
      * <strong>read:</strong><br>
      * readInt, readInt, readShort, readByte
      *
-     * @param messageByteBuffer the output stream to write to
+     * @param messageStream the output stream to write to
      */
-    public abstract void write(@NotNull ByteBufferOutputStream messageByteBuffer);
+    public abstract void write(@NotNull ByteBufferOutputStream messageStream);
 }

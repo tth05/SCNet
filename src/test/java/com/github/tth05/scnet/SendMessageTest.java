@@ -91,37 +91,37 @@ public class SendMessageTest extends SCNetTest {
         }
 
         @Override
-        public void read(@NotNull ByteBufferInputStream messageByteBuffer) {
+        public void read(@NotNull ByteBufferInputStream messageStream) {
             for (int j = 0; j < 10; j++) {
-                this.i = messageByteBuffer.readInt();
+                this.i = messageStream.readInt();
             }
-            this.i = messageByteBuffer.readInt();
+            this.i = messageStream.readInt();
         }
 
         @Override
-        public void write(@NotNull ByteBufferOutputStream messageByteBuffer) {
+        public void write(@NotNull ByteBufferOutputStream messageStream) {
             for (int j = 0; j < 10; j++) {
-                messageByteBuffer.writeInt(69);
+                messageStream.writeInt(69);
             }
-            messageByteBuffer.writeInt(i);
+            messageStream.writeInt(i);
         }
     }
 
     public static final class RandomDataMessage extends AbstractMessage {
 
         @Override
-        public void read(@NotNull ByteBufferInputStream messageByteBuffer) {
-            int l = messageByteBuffer.readInt();
-            String s = messageByteBuffer.readString();
+        public void read(@NotNull ByteBufferInputStream messageStream) {
+            int l = messageStream.readInt();
+            String s = messageStream.readString();
             assertEquals(l, s.length());
         }
 
         @Override
-        public void write(@NotNull ByteBufferOutputStream messageByteBuffer) {
+        public void write(@NotNull ByteBufferOutputStream messageStream) {
             int l = ThreadLocalRandom.current().nextInt(5);
-            messageByteBuffer.writeInt(l);
+            messageStream.writeInt(l);
             String str = IntStream.range(0, l).mapToObj(i -> "1").collect(Collectors.joining());
-            messageByteBuffer.writeString(str);
+            messageStream.writeString(str);
         }
     }
 }
