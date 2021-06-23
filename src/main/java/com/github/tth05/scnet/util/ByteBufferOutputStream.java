@@ -53,6 +53,10 @@ public class ByteBufferOutputStream {
         this.buf.put(ar, offset, length);
     }
 
+    public void writeBoolean(boolean b) {
+        writeByte(b ? 1 : 0);
+    }
+
     public void writeShort(short i) {
         ensureFits(2);
         this.buf.putShort(i);
@@ -66,6 +70,7 @@ public class ByteBufferOutputStream {
     /**
      * Writes the length of the given String followed by the bytes of the String to this output stream. Works in
      * conjunction with {@link ByteBufferInputStream#readString()}.
+     *
      * @param s the String to write
      */
     public void writeString(String s) {

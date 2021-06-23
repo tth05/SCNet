@@ -44,6 +44,17 @@ public class ByteBufferInputStreamTest {
     }
 
     @Test
+    public void testReadBoolean() {
+        buffer.put((byte) 1);
+        buffer.put((byte) 0);
+        buffer.flip();
+
+        assertTrue(stream.readBoolean());
+        assertFalse(stream.readBoolean());
+        assertThrows(BufferUnderflowException.class, stream::readByte);
+    }
+
+    @Test
     public void testReadShort() {
         buffer.putShort(Short.MAX_VALUE);
         buffer.flip();

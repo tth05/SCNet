@@ -36,6 +36,10 @@ public class ByteBufferInputStream {
         this.buf.get(ar, offset, length);
     }
 
+    public boolean readBoolean() {
+        return readByte() != 0;
+    }
+
     public short readShort() {
         return this.buf.getShort();
     }
@@ -46,6 +50,7 @@ public class ByteBufferInputStream {
 
     /**
      * Reads a String in the format written by {@link ByteBufferOutputStream#writeString(String)}.
+     *
      * @return the String
      */
     @NotNull
