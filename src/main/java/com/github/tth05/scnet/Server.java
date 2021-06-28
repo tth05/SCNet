@@ -112,7 +112,12 @@ public class Server implements AutoCloseable {
             return;
 
         try {
-            int select = this.selector.selectNow();
+            int select;
+            if (this.client == null) //We add some delay here to save the processor
+                select = this.selector.select(10);
+            else
+                select = this.selector.selectNow();
+
             if (select < 1)
                 return;
 
