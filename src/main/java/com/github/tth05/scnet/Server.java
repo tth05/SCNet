@@ -97,6 +97,7 @@ public class Server implements AutoCloseable {
                 if (this.client != null) {
                     if (!this.client.process()) {
                         this.client = null;
+                        this.messageProcessor.reset();
                     }
                 }
             }

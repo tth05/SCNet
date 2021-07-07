@@ -49,6 +49,14 @@ public interface IMessageProcessor {
     boolean process(@NotNull Selector selector, @NotNull SocketChannel channel, @NotNull IMessageBus messageBus);
 
     /**
+     * Resets all buffers and message queues of this message processor to put it back in its original state. This should
+     * not reset the buffer size's set by {@link #setReadBufferSize(int)} or {@link #setWriteBufferSize(int)}.
+     * <br>
+     * This should be called when connection is lost.
+     */
+    void reset();
+
+    /**
      * @param delay the delay in milliseconds
      * @see #getProcessLoopDelay()
      */

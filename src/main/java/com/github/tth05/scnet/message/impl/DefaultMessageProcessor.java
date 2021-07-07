@@ -129,6 +129,14 @@ public class DefaultMessageProcessor implements IMessageProcessor {
         }
     }
 
+    @Override
+    public void reset() {
+        this.outgoingMessageQueue.clear();
+        this.messageWriteBuffer.clear();
+        this.writeBuffer.clear();
+        this.readBuffer.clear();
+    }
+
     /**
      * Writes all queued messages in batches to the given {@code channel}.
      *
