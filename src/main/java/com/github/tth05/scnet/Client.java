@@ -93,6 +93,7 @@ public class Client extends AbstractClient {
                     while (true) {
                         if (!this.process()) {
                             this.messageProcessor.reset();
+                            this.close();
                             return;
                         }
                     }
