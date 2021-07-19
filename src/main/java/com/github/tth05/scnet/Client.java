@@ -90,7 +90,7 @@ public class Client extends AbstractClient {
 
             if (this.socketChannel.isConnected()) {
                 this.executor.execute(() -> {
-                    while (true) {
+                    while (this.selector.isOpen()) {
                         if (!this.process()) {
                             this.messageProcessor.reset();
                             this.close();

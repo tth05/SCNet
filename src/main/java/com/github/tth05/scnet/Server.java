@@ -92,7 +92,7 @@ public class Server implements AutoCloseable {
         }
 
         this.executor.execute(() -> {
-            while (true) {
+            while (this.selector.isOpen()) {
                 acceptClient();
                 if (this.client != null) {
                     if (!this.client.process()) {
