@@ -1,9 +1,9 @@
 package com.github.tth05.scnet.message.impl;
 
+import com.github.tth05.scnet.message.*;
 import com.github.tth05.scnet.util.ByteBufferInputStream;
 import com.github.tth05.scnet.util.ByteBufferOutputStream;
 import com.github.tth05.scnet.util.ByteBufferUtils;
-import com.github.tth05.scnet.message.*;
 import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
 
@@ -16,7 +16,10 @@ import java.nio.ByteBuffer;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
 import java.nio.channels.SocketChannel;
-import java.util.*;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.Map;
+import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.function.Supplier;
 
@@ -165,6 +168,10 @@ public class DefaultMessageProcessor implements IMessageProcessor {
                 while (this.writeBuffer.hasRemaining())
                     channel.write(this.writeBuffer);
                 this.writeBuffer.clear();
+
+                if (MESSAGE_HEADER_BYTES + size > this.writeBuffer.capacity()) {
+                    this.writeBuffer = ByteBuffer.allocateDirect(MESSAGE_HEADER_BYTES + size);
+                }
             }
 
             //Append the packet to the writeBuffer
@@ -219,10 +226,12 @@ public class DefaultMessageProcessor implements IMessageProcessor {
 
                 if (this.readBuffer.capacity() - messageStart < MESSAGE_HEADER_BYTES + size) { //Full message is not contained in current buffer
                     if (MESSAGE_HEADER_BYTES + size <= this.readBuffer.capacity()) { //If the buffer can hold the message, then move it to the front and read the rest
+                        this.readBuffer.limit(bytesInBuffer);
                         ByteBufferUtils.moveToFrontAndClear(this.readBuffer, messageStart);
                     } else { //If the full message can't fit into the buffer, then move it to the front in a new buffer
                         //Create new buffer which can hold the message
                         this.readBuffer.position(messageStart);
+                        this.readBuffer.limit(bytesInBuffer);
                         this.readBuffer = ByteBufferUtils.moveToNewDirectBuffer(this.readBuffer, MESSAGE_HEADER_BYTES + size);
                     }
 

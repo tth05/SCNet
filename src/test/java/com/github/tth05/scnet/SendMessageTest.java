@@ -8,14 +8,14 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.function.Executable;
 
+import java.util.Random;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
-import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.*;
 
 @Timeout(10)
 public class SendMessageTest extends SCNetTest {
@@ -77,6 +77,59 @@ public class SendMessageTest extends SCNetTest {
             assertDoesNotThrow((Executable) l::await);
             assertEquals(number, messagePayload.get());
         });
+    }
+
+    @Test
+    public void testSendLargeMessage() {
+        withClientAndServer((s, c) -> {
+            s.getMessageProcessor().registerMessage((short) 1, LargeMessage.class);
+            c.getMessageProcessor().registerMessage((short) 1, LargeMessage.class);
+
+            int count = 250;
+            CountDownLatch latch = new CountDownLatch(count);
+            c.getMessageBus().listenAlways(LargeMessage.class, m -> {
+                latch.countDown();
+            });
+
+            Random random = new Random();
+            for (int i = 0; i < count; i++) {
+                s.getMessageProcessor().enqueueMessage(new LargeMessage(random.nextInt(100000) + 50000));
+            }
+
+            assertDoesNotThrow((Executable) latch::await);
+            assertTrue(s.isClientConnected());
+            assertTrue(c.isConnected());
+        });
+    }
+
+    public static final class LargeMessage extends AbstractMessage {
+
+        private int size;
+
+        public LargeMessage() {
+        }
+
+        public LargeMessage(int size) {
+            this.size = size;
+        }
+
+        @Override
+        public void read(@NotNull ByteBufferInputStream messageStream) {
+            this.size = messageStream.readInt();
+
+            for (int i = 0; i < this.size; i++) {
+                int finalI = i;
+                assertEquals(Integer.MAX_VALUE, messageStream.readInt(), () -> "i: " + finalI + ", size: " + this.size);
+            }
+        }
+
+        @Override
+        public void write(@NotNull ByteBufferOutputStream messageStream) {
+            messageStream.writeInt(this.size);
+            for (int i = 0; i < this.size; i++) {
+                messageStream.writeInt(Integer.MAX_VALUE);
+            }
+        }
     }
 
     public static final class IntMessage extends AbstractMessage {
