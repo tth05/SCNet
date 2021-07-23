@@ -48,6 +48,10 @@ public class ByteBufferInputStream {
         return this.buf.getInt();
     }
 
+    public long readLong() {
+        return this.buf.getLong();
+    }
+
     /**
      * Reads a String in the format written by {@link ByteBufferOutputStream#writeString(String)}.
      *

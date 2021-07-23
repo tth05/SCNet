@@ -67,6 +67,11 @@ public class ByteBufferOutputStream {
         this.buf.putInt(i);
     }
 
+    public void writeLong(long l) {
+        ensureFits(8);
+        this.buf.putLong(l);
+    }
+
     /**
      * Writes the length of the given String followed by the bytes of the String to this output stream. Works in
      * conjunction with {@link ByteBufferInputStream#readString()}.

@@ -97,6 +97,16 @@ public class ByteBufferOutputStreamTest {
     }
 
     @Test
+    public void testWriteLong() {
+        stream.writeLong(Long.MAX_VALUE);
+
+        ByteBuffer buffer = stream.getBuffer();
+        buffer.flip();
+        assertEquals(Long.MAX_VALUE, buffer.getLong());
+        assertThrows(BufferUnderflowException.class, buffer::get);
+    }
+
+    @Test
     public void testWriteString() {
         stream.writeString("testWriteString");
 

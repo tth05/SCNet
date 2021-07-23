@@ -73,6 +73,15 @@ public class ByteBufferInputStreamTest {
     }
 
     @Test
+    public void testReadLong() {
+        buffer.putLong(Long.MAX_VALUE);
+        buffer.flip();
+
+        assertEquals(Long.MAX_VALUE, stream.readLong());
+        assertThrows(BufferUnderflowException.class, stream::readByte);
+    }
+
+    @Test
     public void testReadString() {
         buffer.putInt(14);
         buffer.put("testReadString".getBytes(StandardCharsets.UTF_8));
