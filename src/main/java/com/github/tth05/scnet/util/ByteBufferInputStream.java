@@ -21,7 +21,7 @@ public class ByteBufferInputStream {
         this.buf = buffer;
     }
 
-    public int readByte() {
+    public byte readByte() {
         return this.buf.get();
     }
 
