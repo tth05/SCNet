@@ -134,6 +134,8 @@ public class Server implements AutoCloseable {
                         this.client = null;
 
                     if (!hasClient) { //Accept a new client
+                        this.messageProcessor.reset();
+
                         this.client = new ServerClient(
                                 this.serverSocketChannel.accept(),
                                 getMessageProcessor(),
