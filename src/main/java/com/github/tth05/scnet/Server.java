@@ -59,6 +59,7 @@ public class Server implements AutoCloseable {
                 new LinkedBlockingQueue<>(), r -> {
             Thread t = new Thread(r);
             t.setName("SCNet Server");
+            t.setDaemon(true);
             return t;
         }));
     }

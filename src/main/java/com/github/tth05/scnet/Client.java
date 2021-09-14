@@ -24,6 +24,7 @@ public class Client extends AbstractClient {
                 new LinkedBlockingQueue<>(), r -> {
             Thread t = new Thread(r);
             t.setName("SCNet Client");
+            t.setDaemon(true);
             return t;
         }));
     }
