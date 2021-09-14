@@ -13,7 +13,9 @@ import java.nio.channels.ClosedSelectorException;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
 import java.nio.channels.ServerSocketChannel;
+import java.util.ArrayList;
 import java.util.Iterator;
+import java.util.List;
 import java.util.concurrent.Executor;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -46,6 +48,11 @@ public class Server implements AutoCloseable {
      * Internal socket channel used to accept clients
      */
     private final ServerSocketChannel serverSocketChannel;
+
+    /**
+     * These listeners are notified when the server establishes a connection with a client
+     */
+    private final List<Runnable> onConnectionListeners = new ArrayList<>();
 
     /**
      * The currently connected client
@@ -142,6 +149,10 @@ public class Server implements AutoCloseable {
                                 getMessageProcessor(),
                                 getMessageBus()
                         );
+
+                        synchronized (this.onConnectionListeners) {
+                            this.onConnectionListeners.forEach(Runnable::run);
+                        }
                     } else { //Block other clients trying to connect
                         this.serverSocketChannel.accept().close();
                     }
@@ -152,6 +163,25 @@ public class Server implements AutoCloseable {
         } catch (IOException e) {
             e.printStackTrace();
         } catch (ClosedSelectorException ignored) {
+        }
+    }
+
+    /**
+     * Adds a listener that is notified when the server establishes a new connection with a client. The listener is not
+     * notified for declined connections.
+     */
+    public void addOnConnectionListener(Runnable r) {
+        synchronized (this.onConnectionListeners) {
+            this.onConnectionListeners.add(r);
+        }
+    }
+
+    /**
+     * Removes a connection listener
+     */
+    public void removeOnConnectionListener(Runnable r) {
+        synchronized (this.onConnectionListeners) {
+            this.onConnectionListeners.remove(r);
         }
     }
 
