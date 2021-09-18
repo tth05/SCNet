@@ -25,6 +25,11 @@ public interface IMessageBus {
     <T extends AbstractMessage> void listenOnce(@NotNull Class<T> messageClass, @NotNull Consumer<T> listener);
 
     /**
+     * Unregisters the given listener
+     */
+    <T extends AbstractMessage> void unregister(@NotNull Class<T> messageClass, @NotNull Consumer<T> listener);
+
+    /**
      * Posts a message to this bus and distributes it to all listeners. Should be called by a {@link IMessageProcessor}.
      *
      * @param message the message
