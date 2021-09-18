@@ -31,7 +31,7 @@ public class DefaultMessageBus implements IMessageBus {
 
     @Override
     public <T extends AbstractMessage> void unregister(@NotNull Class<T> messageClass, @NotNull Consumer<T> listener) {
-        var registeredListeners = this.listeners.get(messageClass);
+        List<RegisteredListener> registeredListeners = this.listeners.get(messageClass);
         if (registeredListeners == null)
             return;
 
