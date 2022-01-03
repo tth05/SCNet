@@ -4,11 +4,12 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 import java.net.InetSocketAddress;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 @Timeout(10)
-public class ConnectionTest extends SCNetTest {
+public class ConnectionTest extends AbstractSCNetTest {
 
     @Test
     public void testConnectClientToServer() {
@@ -65,6 +66,39 @@ public class ConnectionTest extends SCNetTest {
             //Wait for server to accept new client
             assertDoesNotThrow(() -> Thread.sleep(50));
             assertNotNull(getClientFromServer(s));
+        });
+    }
+
+    @Test
+    public void testServerOnConnectionListeners() {
+        withClientAndServer((s, c) -> {
+            c.close();
+
+            AtomicInteger count = new AtomicInteger();
+            Runnable r = count::incrementAndGet;
+            s.addOnConnectionListener(r);
+
+            c = new Client();
+            assertTrue(c.connect(new InetSocketAddress(6969)));
+            assertTrue(c.isConnected());
+            //Wait for server to accept new client
+            assertDoesNotThrow(() -> Thread.sleep(50));
+            assertNotNull(getClientFromServer(s));
+            assertTrue(s.isClientConnected());
+
+            assertEquals(1, count.get());
+
+            s.removeOnConnectionListener(r);
+
+            c = new Client();
+            assertTrue(c.connect(new InetSocketAddress(6969)));
+            assertTrue(c.isConnected());
+            //Wait for server to accept new client
+            assertDoesNotThrow(() -> Thread.sleep(50));
+            assertNotNull(getClientFromServer(s));
+            assertTrue(s.isClientConnected());
+
+            assertEquals(1, count.get());
         });
     }
 }

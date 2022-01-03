@@ -18,7 +18,7 @@ import java.util.stream.IntStream;
 import static org.junit.jupiter.api.Assertions.*;
 
 @Timeout(10)
-public class SendMessageTest extends SCNetTest {
+public class SendMessageTest extends AbstractSCNetTest {
 
     @Test
     public void testSendBasicMessage() {

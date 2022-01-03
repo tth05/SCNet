@@ -20,6 +20,23 @@ public class ByteBufferOutputStreamTest {
     }
 
     @Test
+    public void testDefaultSize() {
+        stream = new ByteBufferOutputStream();
+
+        assertEquals(32, stream.getBuffer().capacity());
+    }
+
+    @Test
+    public void testCreateWithNegativeSize() {
+        assertThrows(IllegalArgumentException.class, () -> new ByteBufferOutputStream(-1));
+    }
+
+    @Test
+    public void testCreateWithDirectBuffer() {
+        assertThrows(IllegalArgumentException.class, () -> new ByteBufferOutputStream(ByteBuffer.allocateDirect(1)));
+    }
+
+    @Test
     public void testWriteByte() {
         stream.writeByte(25);
         stream.writeByte(-25);

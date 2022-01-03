@@ -9,7 +9,7 @@ import java.util.function.BiConsumer;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-public class SCNetTest {
+public abstract class AbstractSCNetTest {
 
     public void withClientAndServer(BiConsumer<Server, Client> consumer) {
         try (Server s = new Server(); Client c = new Client()) {
