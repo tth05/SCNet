@@ -70,15 +70,42 @@ public class ConnectionTest extends AbstractSCNetTest {
     }
 
     @Test
-    public void testServerOnConnectionListeners() {
+    public void testConnectionListeners() {
         withClientAndServer((s, c) -> {
             c.close();
+            assertDoesNotThrow(() -> Thread.sleep(50));
 
             AtomicInteger count = new AtomicInteger();
-            Runnable r = count::incrementAndGet;
-            s.addOnConnectionListener(r);
+            IConnectionListener listener = new IConnectionListener() {
+                @Override
+                public void onConnected() {
+                    count.incrementAndGet();
+                    count.incrementAndGet();
+                }
+
+                @Override
+                public void onDisconnected() {
+                    count.decrementAndGet();
+                }
+            };
+            s.addConnectionListener(listener);
 
             c = new Client();
+            c.addConnectionListener(listener);
+            assertTrue(c.connect(new InetSocketAddress(6969)));
+            assertTrue(c.isConnected());
+            //Wait for server to accept new client
+            assertDoesNotThrow(() -> Thread.sleep(50));
+            assertNotNull(getClientFromServer(s));
+            assertTrue(s.isClientConnected());
+            assertEquals(4, count.get());
+            c.close();
+            assertDoesNotThrow(() -> Thread.sleep(50));
+
+            s.removeConnectionListener(listener);
+
+            c = new Client();
+            c.addConnectionListener(listener);
             assertTrue(c.connect(new InetSocketAddress(6969)));
             assertTrue(c.isConnected());
             //Wait for server to accept new client
@@ -86,19 +113,7 @@ public class ConnectionTest extends AbstractSCNetTest {
             assertNotNull(getClientFromServer(s));
             assertTrue(s.isClientConnected());
 
-            assertEquals(1, count.get());
-
-            s.removeOnConnectionListener(r);
-
-            c = new Client();
-            assertTrue(c.connect(new InetSocketAddress(6969)));
-            assertTrue(c.isConnected());
-            //Wait for server to accept new client
-            assertDoesNotThrow(() -> Thread.sleep(50));
-            assertNotNull(getClientFromServer(s));
-            assertTrue(s.isClientConnected());
-
-            assertEquals(1, count.get());
+            assertEquals(4, count.get());
         });
     }
 }

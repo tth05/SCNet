@@ -74,8 +74,14 @@ public class DefaultMessageBus implements IMessageBus {
             for (Iterator<RegisteredListener> iterator = this.listeners.getOrDefault(message.getClass(), Collections.emptyList()).iterator(); iterator.hasNext(); ) {
                 RegisteredListener listener = iterator.next();
 
-                //noinspection unchecked
-                listener.listener.accept(message);
+                try {
+                    //noinspection unchecked
+                    listener.listener.accept(message);
+                } catch (Throwable t) {
+                    System.err.println("Exception occurred while handling message: " + message.getClass().getName());
+                    t.printStackTrace();
+                }
+
                 if (listener.once)
                     iterator.remove();
             }

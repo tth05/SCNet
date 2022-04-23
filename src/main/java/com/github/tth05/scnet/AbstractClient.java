@@ -12,6 +12,8 @@ import java.nio.ByteBuffer;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
 import java.nio.channels.SocketChannel;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
@@ -41,6 +43,12 @@ public abstract class AbstractClient implements AutoCloseable {
      */
     @NotNull
     protected IMessageProcessor messageProcessor = new DefaultMessageProcessor();
+
+    /**
+     * These listeners are notified when a connection is established
+     */
+    @NotNull
+    protected List<IConnectionListener> connectionListeners = new ArrayList<>();
 
     /**
      * A lock to prevent {@link #close()}ing the selector and channel while the {@link #process()} loop is working.
@@ -119,6 +127,30 @@ public abstract class AbstractClient implements AutoCloseable {
         }
 
         return this.socketChannel.isConnected() && this.socketChannel.isOpen();
+    }
+
+    /**
+     * Adds a listener that is notified about connection events.
+     */
+    public void addConnectionListener(IConnectionListener listener) {
+        synchronized (this.connectionListeners) {
+            this.connectionListeners.add(listener);
+        }
+    }
+
+    /**
+     * Removes a connection listener
+     */
+    public void removeConnectionListener(IConnectionListener listener) {
+        synchronized (this.connectionListeners) {
+            this.connectionListeners.remove(listener);
+        }
+    }
+
+    protected void onDisconnected() {
+        synchronized (this.connectionListeners) {
+            this.connectionListeners.forEach(IConnectionListener::onDisconnected);
+        }
     }
 
     @Override

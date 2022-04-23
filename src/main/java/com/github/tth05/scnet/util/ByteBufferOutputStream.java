@@ -86,13 +86,13 @@ public class ByteBufferOutputStream {
     }
 
     /**
-     * Adjusts the internal buffer so that it can hold at least {@code i} more bytes.
+     * Adjusts the internal buffer so that it can hold at least {@code i} more bytes by doubling its size if needed.
      */
     private void ensureFits(int i) {
         int position = this.buf.position();
         if (this.buf.capacity() < position + i) {
             this.buf.flip();
-            this.buf = ByteBufferUtils.moveToNewBuffer(this.buf, position + i);
+            this.buf = ByteBufferUtils.moveToNewBuffer(this.buf, (position + i) * 2);
         }
     }
 

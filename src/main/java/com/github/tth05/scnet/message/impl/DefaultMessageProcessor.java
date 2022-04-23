@@ -93,7 +93,7 @@ public class DefaultMessageProcessor implements IMessageProcessor {
             this.incomingMessages.put(id, new RegisteredIncomingMessage(messageClass));
             this.outgoingMessages.put(messageClass, id);
         } else {
-            throw new IllegalArgumentException("messageClass does not implement IMessage");
+            throw new IllegalArgumentException("messageClass does not implement AbstractMessage");
         }
     }
 
@@ -126,8 +126,8 @@ public class DefaultMessageProcessor implements IMessageProcessor {
             }
 
             return true;
-        } catch (Throwable t) {
-            t.printStackTrace();
+        } catch (IOException | InterruptedException e) {
+            e.printStackTrace();
             return false;
         }
     }
@@ -147,10 +147,16 @@ public class DefaultMessageProcessor implements IMessageProcessor {
      * @throws IOException if any write operation failed
      */
     private void doWrite(SocketChannel channel) throws IOException {
-        for (Iterator<AbstractMessage> iterator = this.outgoingMessageQueue.iterator(); iterator.hasNext(); ) {
+        for (Iterator<AbstractMessage> iterator = this.outgoingMessageQueue.iterator(); iterator.hasNext(); iterator.remove()) {
             AbstractMessage message = iterator.next();
             ByteBufferOutputStream messageOutStream = new ByteBufferOutputStream(this.messageWriteBuffer);
-            message.write(messageOutStream);
+            try {
+                message.write(messageOutStream);
+            } catch (Throwable t) {
+                System.err.println("Exception occurred while serializing message: " + message.getClass().getName());
+                t.printStackTrace();
+                continue;
+            }
 
             //If the buffer increased in size, save the reference
             if (this.messageWriteBuffer != messageOutStream.getBuffer()) {
@@ -179,8 +185,6 @@ public class DefaultMessageProcessor implements IMessageProcessor {
             this.writeBuffer.putInt(size);
             this.messageWriteBuffer.flip();
             this.writeBuffer.put(this.messageWriteBuffer);
-
-            iterator.remove();
         }
 
         this.writeBuffer.flip();
@@ -254,8 +258,13 @@ public class DefaultMessageProcessor implements IMessageProcessor {
                 RegisteredIncomingMessage registeredMessage = this.incomingMessages.get(id);
                 if (registeredMessage != null) {
                     AbstractMessage message = registeredMessage.newInstance();
-                    message.read(new ByteBufferInputStream(this.readBuffer));
-                    messageBus.post(message);
+                    try {
+                        message.read(new ByteBufferInputStream(this.readBuffer));
+                        messageBus.post(message);
+                    } catch (Throwable t) {
+                        System.err.println("Exception while reading message " + message.getClass().getName());
+                        t.printStackTrace();
+                    }
                 }
 
                 messageStart += MESSAGE_HEADER_BYTES + size;
@@ -274,8 +283,7 @@ public class DefaultMessageProcessor implements IMessageProcessor {
             }
 
             return true;
-        } catch (Throwable t) {
-            t.printStackTrace();
+        } catch (IOException t) {
             return false;
         }
     }

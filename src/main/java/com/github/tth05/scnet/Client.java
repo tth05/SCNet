@@ -93,17 +93,19 @@ public class Client extends AbstractClient {
                 this.executor.execute(() -> {
                     this.messageProcessor.reset();
 
+                    synchronized (this.connectionListeners) {
+                        this.connectionListeners.forEach(IConnectionListener::onConnected);
+                    }
+
                     while (this.selector.isOpen()) {
                         if (!this.process()) {
                             this.messageProcessor.reset();
                             this.close();
+                            onDisconnected();
                             return;
                         }
                     }
                 });
-
-                //TODO: send welcome message between client and server. A connection might not mean that both can
-                // communicate now
                 return true;
             }
 

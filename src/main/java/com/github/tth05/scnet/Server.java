@@ -41,6 +41,11 @@ public class Server implements AutoCloseable {
     private IMessageProcessor messageProcessor = new DefaultMessageProcessor();
 
     /**
+     * These listeners are notified when a connection is established
+     */
+    private final List<IConnectionListener> connectionListeners = new ArrayList<>();
+
+    /**
      * Selector used to check for {@link SelectionKey#OP_ACCEPT}.
      */
     private final Selector selector;
@@ -48,11 +53,6 @@ public class Server implements AutoCloseable {
      * Internal socket channel used to accept clients
      */
     private final ServerSocketChannel serverSocketChannel;
-
-    /**
-     * These listeners are notified when the server establishes a connection with a client
-     */
-    private final List<Runnable> onConnectionListeners = new ArrayList<>();
 
     /**
      * The currently connected client
@@ -146,13 +146,10 @@ public class Server implements AutoCloseable {
 
                         this.client = new ServerClient(
                                 this.serverSocketChannel.accept(),
+                                this.connectionListeners,
                                 getMessageProcessor(),
                                 getMessageBus()
                         );
-
-                        synchronized (this.onConnectionListeners) {
-                            this.onConnectionListeners.forEach(Runnable::run);
-                        }
                     } else { //Block other clients trying to connect
                         this.serverSocketChannel.accept().close();
                     }
@@ -163,25 +160,6 @@ public class Server implements AutoCloseable {
         } catch (IOException e) {
             e.printStackTrace();
         } catch (ClosedSelectorException ignored) {
-        }
-    }
-
-    /**
-     * Adds a listener that is notified when the server establishes a new connection with a client. The listener is not
-     * notified for declined connections.
-     */
-    public void addOnConnectionListener(Runnable r) {
-        synchronized (this.onConnectionListeners) {
-            this.onConnectionListeners.add(r);
-        }
-    }
-
-    /**
-     * Removes a connection listener
-     */
-    public void removeOnConnectionListener(Runnable r) {
-        synchronized (this.onConnectionListeners) {
-            this.onConnectionListeners.remove(r);
         }
     }
 
@@ -207,6 +185,28 @@ public class Server implements AutoCloseable {
             this.serverSocketChannel.close();
         } catch (IOException e) {
             e.printStackTrace();
+        }
+    }
+
+    /**
+     * Adds a listener that is notified about connection events.
+     */
+    public void addConnectionListener(IConnectionListener listener) {
+        synchronized (this.connectionListeners) {
+            this.connectionListeners.add(listener);
+            if (this.client != null)
+                this.client.addConnectionListener(listener);
+        }
+    }
+
+    /**
+     * Removes a connection listener
+     */
+    public void removeConnectionListener(IConnectionListener listener) {
+        synchronized (this.connectionListeners) {
+            this.connectionListeners.remove(listener);
+            if (this.client != null)
+                this.client.removeConnectionListener(listener);
         }
     }
 
