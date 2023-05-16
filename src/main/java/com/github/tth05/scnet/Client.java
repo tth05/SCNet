@@ -2,6 +2,7 @@ package com.github.tth05.scnet;
 
 import org.jetbrains.annotations.NotNull;
 
+import java.net.ConnectException;
 import java.net.SocketAddress;
 import java.nio.channels.SelectionKey;
 import java.util.Iterator;
@@ -93,9 +94,7 @@ public class Client extends AbstractClient {
                 this.executor.execute(() -> {
                     this.messageProcessor.reset();
 
-                    synchronized (this.connectionListeners) {
-                        this.connectionListeners.forEach(IConnectionListener::onConnected);
-                    }
+                    this.connectionListeners.forEach(IConnectionListener::onConnected);
 
                     while (this.selector.isOpen()) {
                         if (!this.process()) {
@@ -110,7 +109,11 @@ public class Client extends AbstractClient {
             }
 
             return false;
+        } catch (ConnectException e) {
+            close();
+            return false;
         } catch (Throwable e) {
+            close();
             throw new RuntimeException(e);
         }
     }

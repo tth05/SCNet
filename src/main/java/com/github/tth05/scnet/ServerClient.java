@@ -18,9 +18,7 @@ class ServerClient extends AbstractClient {
         setMessageBus(messageBus);
 
         this.connectionListeners = connectionListeners;
-        synchronized (this.connectionListeners) {
-            this.connectionListeners.forEach(IConnectionListener::onConnected);
-        }
+        this.connectionListeners.forEach(IConnectionListener::onConnected);
     }
 
     @Override

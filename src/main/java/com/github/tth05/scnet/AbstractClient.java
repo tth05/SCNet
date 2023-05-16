@@ -9,10 +9,12 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.channels.NotYetConnectedException;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
 import java.nio.channels.SocketChannel;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -48,7 +50,7 @@ public abstract class AbstractClient implements AutoCloseable {
      * These listeners are notified when a connection is established
      */
     @NotNull
-    protected List<IConnectionListener> connectionListeners = new ArrayList<>();
+    protected List<IConnectionListener> connectionListeners = Collections.synchronizedList(new ArrayList<>());
 
     /**
      * A lock to prevent {@link #close()}ing the selector and channel while the {@link #process()} loop is working.
@@ -122,7 +124,7 @@ public abstract class AbstractClient implements AutoCloseable {
             //Write twice to make it fail
             this.socketChannel.write(ByteBuffer.wrap(new byte[]{0, 0, 0, 0, 0, 0}));
             this.socketChannel.write(ByteBuffer.wrap(new byte[]{0, 0, 0, 0, 0, 0}));
-        } catch (IOException e) {
+        } catch (IOException | NotYetConnectedException e) {
             return false;
         }
 
@@ -133,24 +135,18 @@ public abstract class AbstractClient implements AutoCloseable {
      * Adds a listener that is notified about connection events.
      */
     public void addConnectionListener(IConnectionListener listener) {
-        synchronized (this.connectionListeners) {
-            this.connectionListeners.add(listener);
-        }
+        this.connectionListeners.add(listener);
     }
 
     /**
      * Removes a connection listener
      */
     public void removeConnectionListener(IConnectionListener listener) {
-        synchronized (this.connectionListeners) {
-            this.connectionListeners.remove(listener);
-        }
+        this.connectionListeners.remove(listener);
     }
 
     protected void onDisconnected() {
-        synchronized (this.connectionListeners) {
-            this.connectionListeners.forEach(IConnectionListener::onDisconnected);
-        }
+        this.connectionListeners.forEach(IConnectionListener::onDisconnected);
     }
 
     @Override
