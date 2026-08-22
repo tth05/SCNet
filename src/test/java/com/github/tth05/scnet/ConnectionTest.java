@@ -4,116 +4,158 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 import java.net.InetSocketAddress;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.CountDownLatch;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @Timeout(10)
 public class ConnectionTest extends AbstractSCNetTest {
 
     @Test
-    public void testConnectClientToServer() {
-        withClientAndServer((s, c) -> assertNotNull(getClientFromServer(s)));
+    public void connectsClientToServerAndReportsState() throws Exception {
+        try (Server server = new Server(); Client client = new Client()) {
+            ConnectionProbe serverProbe = new ConnectionProbe(1, 1);
+            ConnectionProbe clientProbe = new ConnectionProbe(1, 1);
+            server.addConnectionListener(serverProbe);
+            client.addConnectionListener(clientProbe);
+            server.bind(new InetSocketAddress("127.0.0.1", 0));
+
+            assertTrue(client.connect(server.getLocalAddress()));
+            await(serverProbe.connected);
+            await(clientProbe.connected);
+
+            assertTrue(server.isClientConnected());
+            assertTrue(client.isConnected());
+            assertEquals(ConnectionState.CONNECTED, client.getConnectionState());
+            assertEquals(1, serverProbe.connectedCalls.get());
+            assertEquals(1, clientProbe.connectedCalls.get());
+        }
     }
 
     @Test
-    public void testIsConnected() {
-        //Disconnect from server side
-        withClientAndServer((s, c) -> {
-            assertTrue(s.isClientConnected());
-            assertTrue(c.isConnected());
-            s.closeClient();
-            assertDoesNotThrow(() -> Thread.sleep(50));
-            assertNull(getClientFromServer(s));
-            assertFalse(c.isConnected());
-        });
+    public void serverCloseDisconnectsBothEndpoints() throws Exception {
+        withClientAndServer((server, client) -> {
+            ConnectionProbe serverProbe = new ConnectionProbe(0, 1);
+            ConnectionProbe clientProbe = new ConnectionProbe(0, 1);
+            server.addConnectionListener(serverProbe);
+            client.addConnectionListener(clientProbe);
 
-        //Disconnect from client side
-        withClientAndServer((s, c) -> {
-            assertTrue(s.isClientConnected());
-            assertTrue(c.isConnected());
-            c.close();
-            assertDoesNotThrow(() -> Thread.sleep(50));
-            assertNull(getClientFromServer(s));
-            assertFalse(c.isConnected());
-        });
-    }
+            server.closeClient();
 
-    @Test
-    public void testReconnect() {
-        withClientAndServer((s, c) -> {
-            c.close();
-
-            Client c2 = new Client();
-            assertTrue(c2.connect(new InetSocketAddress(6969)));
-            assertTrue(c2.isConnected());
-            //Wait for server to accept new client
-            assertDoesNotThrow(() -> Thread.sleep(50));
-            assertNotNull(getClientFromServer(s));
-            assertTrue(s.isClientConnected());
-        });
-
-        withClientAndServer((s, c) -> {
-            Client c2 = new Client();
-            assertTrue(c2.connect(new InetSocketAddress(6969)));
-            assertDoesNotThrow(() -> Thread.sleep(50));
-            //Second client can't connect
-            assertFalse(c2.isConnected());
-            //Disconnect first client
-            s.closeClient();
-
-            assertTrue(c.connect(new InetSocketAddress(6969)));
-            //Wait for server to accept new client
-            assertDoesNotThrow(() -> Thread.sleep(50));
-            assertNotNull(getClientFromServer(s));
+            await(serverProbe.disconnected);
+            await(clientProbe.disconnected);
+            assertFalse(server.isClientConnected());
+            assertFalse(client.isConnected());
+            assertEquals(ConnectionState.DISCONNECTED, client.getConnectionState());
+            assertEquals(1, serverProbe.disconnectedCalls.get());
+            assertEquals(1, clientProbe.disconnectedCalls.get());
         });
     }
 
     @Test
-    public void testConnectionListeners() {
-        withClientAndServer((s, c) -> {
-            c.close();
-            assertDoesNotThrow(() -> Thread.sleep(50));
+    public void clientCloseDisconnectsBothEndpointsAndIsIdempotent() throws Exception {
+        withClientAndServer((server, client) -> {
+            ConnectionProbe serverProbe = new ConnectionProbe(0, 1);
+            ConnectionProbe clientProbe = new ConnectionProbe(0, 1);
+            server.addConnectionListener(serverProbe);
+            client.addConnectionListener(clientProbe);
 
-            AtomicInteger count = new AtomicInteger();
-            IConnectionListener listener = new IConnectionListener() {
+            client.close();
+            client.close();
+
+            await(serverProbe.disconnected);
+            await(clientProbe.disconnected);
+            assertFalse(server.isClientConnected());
+            assertFalse(client.isConnected());
+            assertEquals(1, clientProbe.disconnectedCalls.get());
+        });
+    }
+
+    @Test
+    public void reconnectsTheSameClientAfterClose() throws Exception {
+        try (Server server = new Server(); Client client = new Client()) {
+            CountDownLatch firstServerConnected = new CountDownLatch(1);
+            CountDownLatch firstServerDisconnected = new CountDownLatch(1);
+            CountDownLatch firstClientConnected = new CountDownLatch(1);
+            CountDownLatch firstClientDisconnected = new CountDownLatch(1);
+            ConnectionProbe serverProbe = new ConnectionProbe(2, 2);
+            ConnectionProbe clientProbe = new ConnectionProbe(2, 2);
+            server.addConnectionListener(new IConnectionListener() {
                 @Override
                 public void onConnected() {
-                    count.incrementAndGet();
-                    count.incrementAndGet();
+                    firstServerConnected.countDown();
+                    serverProbe.onConnected();
                 }
 
                 @Override
                 public void onDisconnected() {
-                    count.decrementAndGet();
+                    firstServerDisconnected.countDown();
+                    serverProbe.onDisconnected();
                 }
-            };
-            s.addConnectionListener(listener);
+            });
+            client.addConnectionListener(new IConnectionListener() {
+                @Override
+                public void onConnected() {
+                    firstClientConnected.countDown();
+                    clientProbe.onConnected();
+                }
 
-            c = new Client();
-            c.addConnectionListener(listener);
-            assertTrue(c.connect(new InetSocketAddress(6969)));
-            assertTrue(c.isConnected());
-            //Wait for server to accept new client
-            assertDoesNotThrow(() -> Thread.sleep(50));
-            assertNotNull(getClientFromServer(s));
-            assertTrue(s.isClientConnected());
-            assertEquals(4, count.get());
-            c.close();
-            assertDoesNotThrow(() -> Thread.sleep(50));
+                @Override
+                public void onDisconnected() {
+                    firstClientDisconnected.countDown();
+                    clientProbe.onDisconnected();
+                }
+            });
+            server.bind(new InetSocketAddress("127.0.0.1", 0));
 
-            s.removeConnectionListener(listener);
+            assertTrue(client.connect(server.getLocalAddress()));
+            await(firstServerConnected);
+            await(firstClientConnected);
+            client.close();
+            await(firstServerDisconnected);
+            await(firstClientDisconnected);
 
-            c = new Client();
-            c.addConnectionListener(listener);
-            assertTrue(c.connect(new InetSocketAddress(6969)));
-            assertTrue(c.isConnected());
-            //Wait for server to accept new client
-            assertDoesNotThrow(() -> Thread.sleep(50));
-            assertNotNull(getClientFromServer(s));
-            assertTrue(s.isClientConnected());
+            assertTrue(client.connect(server.getLocalAddress()));
+            await(serverProbe.connected);
+            await(clientProbe.connected);
+            assertTrue(server.isClientConnected());
+            assertTrue(client.isConnected());
+            assertEquals(2, serverProbe.connectedCalls.get());
+            assertEquals(2, clientProbe.connectedCalls.get());
+        }
+    }
 
-            assertEquals(4, count.get());
-        });
+    @Test
+    public void rejectsASecondClientUntilTheFirstDisconnects() throws Exception {
+        try (Server server = new Server(); Client first = new Client(); Client second = new Client()) {
+            ConnectionProbe serverProbe = new ConnectionProbe(1, 1);
+            ConnectionProbe secondProbe = new ConnectionProbe(1, 1);
+            server.addConnectionListener(serverProbe);
+            second.addConnectionListener(secondProbe);
+            server.bind(new InetSocketAddress("127.0.0.1", 0));
+
+            assertTrue(first.connect(server.getLocalAddress()));
+            await(serverProbe.connected);
+            assertTrue(second.connect(server.getLocalAddress()));
+            await(secondProbe.connected);
+            await(secondProbe.disconnected);
+
+            assertTrue(first.isConnected());
+            assertFalse(second.isConnected());
+            assertEquals(1, secondProbe.disconnectedCalls.get());
+        }
+    }
+
+    @Test
+    public void interruptedRetryStopsAndRestoresInterruptFlag() {
+        try (Client client = new Client()) {
+            Thread.currentThread().interrupt();
+            assertFalse(client.connect(new InetSocketAddress("127.0.0.1", 1), 1000, 2));
+            assertTrue(Thread.currentThread().isInterrupted());
+        } finally {
+            Thread.interrupted();
+        }
     }
 }

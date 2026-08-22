@@ -6,9 +6,7 @@ import com.github.tth05.scnet.util.ByteBufferOutputStream;
 import org.jetbrains.annotations.NotNull;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
-import org.junit.jupiter.api.function.Executable;
 
-import java.util.Random;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -21,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.*;
 public class SendMessageTest extends AbstractSCNetTest {
 
     @Test
-    public void testSendBasicMessage() {
+    public void testSendBasicMessage() throws Exception {
         int number = ThreadLocalRandom.current().nextInt(Integer.MAX_VALUE);
         withClientAndServer((s, c) -> {
             //Register message
@@ -30,20 +28,21 @@ public class SendMessageTest extends AbstractSCNetTest {
 
             //Listen for message
             AtomicInteger messagePayload = new AtomicInteger(-1);
+            CountDownLatch latch = new CountDownLatch(1);
             s.getMessageBus().listenAlways(IntMessage.class, (i) -> {
                 messagePayload.set(i.i);
+                latch.countDown();
             });
 
             //Send message
             c.getMessageProcessor().enqueueMessage(new IntMessage(number));
-            //Wait for message to arrive
-            assertDoesNotThrow(() -> Thread.sleep(50));
+            await(latch);
             assertEquals(number, messagePayload.get());
         });
     }
 
     @Test
-    public void testSendMessageWithCallerProvidedFactory() {
+    public void testSendMessageWithCallerProvidedFactory() throws Exception {
         int number = ThreadLocalRandom.current().nextInt(Integer.MAX_VALUE);
         withClientAndServer((s, c) -> {
             c.getMessageProcessor().registerMessage((short) 1, FactoryMessage.class, () -> new FactoryMessage(0));
@@ -58,13 +57,13 @@ public class SendMessageTest extends AbstractSCNetTest {
 
             c.getMessageProcessor().enqueueMessage(new FactoryMessage(number));
 
-            assertDoesNotThrow((Executable) latch::await);
+            await(latch);
             assertEquals(number, messagePayload.get());
         });
     }
 
     @Test
-    public void testSendMixedBatchMessages() {
+    public void testSendMixedBatchMessages() throws Exception {
         int number = ThreadLocalRandom.current().nextInt(Integer.MAX_VALUE);
         withClientAndServer((s, c) -> {
             //Register message
@@ -95,29 +94,27 @@ public class SendMessageTest extends AbstractSCNetTest {
                 }
             }
 
-            assertDoesNotThrow((Executable) l::await);
+            await(l);
             assertEquals(number, messagePayload.get());
         });
     }
 
     @Test
-    public void testSendLargeMessage() {
+    public void testSendLargeMessageAcrossPartialReadsAndWrites() throws Exception {
         withClientAndServer((s, c) -> {
             s.getMessageProcessor().registerMessage((short) 1, LargeMessage.class);
             c.getMessageProcessor().registerMessage((short) 1, LargeMessage.class);
 
-            int count = 250;
-            CountDownLatch latch = new CountDownLatch(count);
+            s.getMessageProcessor().setReadBufferSize(257);
+            c.getMessageProcessor().setReadBufferSize(251);
+            CountDownLatch latch = new CountDownLatch(1);
             c.getMessageBus().listenAlways(LargeMessage.class, m -> {
                 latch.countDown();
             });
 
-            Random random = new Random();
-            for (int i = 0; i < count; i++) {
-                s.getMessageProcessor().enqueueMessage(new LargeMessage(random.nextInt(100000) + 50000));
-            }
+            s.getMessageProcessor().enqueueMessage(new LargeMessage(250_000));
 
-            assertDoesNotThrow((Executable) latch::await);
+            await(latch);
             assertTrue(s.isClientConnected());
             assertTrue(c.isConnected());
         });

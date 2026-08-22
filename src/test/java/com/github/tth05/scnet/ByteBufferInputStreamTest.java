@@ -90,4 +90,31 @@ public class ByteBufferInputStreamTest {
         assertEquals("testReadString", stream.readString());
         assertThrows(BufferUnderflowException.class, buffer::get);
     }
+
+    @Test
+    public void rejectsNegativeStringLength() {
+        buffer.putInt(-1);
+        buffer.flip();
+
+        assertThrows(IllegalArgumentException.class, stream::readString);
+    }
+
+    @Test
+    public void rejectsStringLengthBeyondConfiguredMaximum() {
+        buffer.putInt(5);
+        buffer.put("abcde".getBytes(StandardCharsets.UTF_8));
+        buffer.flip();
+
+        ByteBufferInputStream boundedStream = new ByteBufferInputStream(buffer, 4);
+        assertThrows(IllegalArgumentException.class, boundedStream::readString);
+    }
+
+    @Test
+    public void rejectsStringLengthBeyondRemainingFrameBytes() {
+        buffer.putInt(5);
+        buffer.put((byte) 1);
+        buffer.flip();
+
+        assertThrows(IllegalArgumentException.class, stream::readString);
+    }
 }

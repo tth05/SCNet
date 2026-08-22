@@ -135,4 +135,18 @@ public class ByteBufferOutputStreamTest {
         assertEquals("testWriteString", new String(dst, StandardCharsets.UTF_8));
         assertThrows(BufferUnderflowException.class, buffer::get);
     }
+
+    @Test
+    public void rejectsWritesBeyondConfiguredCapacity() {
+        ByteBufferOutputStream boundedStream = new ByteBufferOutputStream(2, 4, 4);
+
+        assertThrows(IllegalArgumentException.class, () -> boundedStream.writeLong(1L));
+    }
+
+    @Test
+    public void rejectsStringsBeyondConfiguredMaximum() {
+        ByteBufferOutputStream boundedStream = new ByteBufferOutputStream(2, 16, 4);
+
+        assertThrows(IllegalArgumentException.class, () -> boundedStream.writeString("abcde"));
+    }
 }
