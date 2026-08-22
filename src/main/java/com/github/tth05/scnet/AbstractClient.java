@@ -147,6 +147,7 @@ public abstract class AbstractClient implements AutoCloseable {
     }
 
     private void runEventLoop(ConnectionContext context) {
+        context.eventLoopRunning.set(true);
         Throwable failure = null;
         try {
             if (!isCurrent(context)) {
@@ -242,7 +243,7 @@ public abstract class AbstractClient implements AutoCloseable {
             this.connectionState = ConnectionState.CLOSING;
         }
         finishConnection(context, null);
-        if (!context.eventLoopStarted.get()) {
+        if (!context.eventLoopRunning.get()) {
             completeConnection(context);
         }
     }
@@ -354,6 +355,7 @@ public abstract class AbstractClient implements AutoCloseable {
         private final AtomicBoolean completed = new AtomicBoolean();
         private final AtomicBoolean disconnectedNotified = new AtomicBoolean();
         private final AtomicBoolean eventLoopStarted = new AtomicBoolean();
+        private final AtomicBoolean eventLoopRunning = new AtomicBoolean();
         private final CountDownLatch eventLoopStopped = new CountDownLatch(1);
         @Nullable
         private volatile Runnable afterClose;

@@ -4,7 +4,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 import java.net.InetSocketAddress;
+import java.nio.channels.ServerSocketChannel;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -156,6 +158,27 @@ public class ConnectionTest extends AbstractSCNetTest {
             assertTrue(Thread.currentThread().isInterrupted());
         } finally {
             Thread.interrupted();
+        }
+    }
+
+    @Test
+    public void closesEvenWhenAnExternalExecutorHasNotStartedTheEventLoop() throws Exception {
+        AtomicReference<Runnable> queuedEventLoop = new AtomicReference<>();
+        try (ServerSocketChannel rawServer = ServerSocketChannel.open();
+             Client client = new Client(queuedEventLoop::set)) {
+            rawServer.bind(new InetSocketAddress("127.0.0.1", 0));
+            ConnectionProbe probe = new ConnectionProbe(0, 1);
+            client.addConnectionListener(probe);
+
+            assertTrue(client.connect(rawServer.getLocalAddress()));
+            try (java.nio.channels.SocketChannel ignored = rawServer.accept()) {
+                client.close();
+                await(probe.disconnected);
+                assertEquals(ConnectionState.DISCONNECTED, client.getConnectionState());
+
+                queuedEventLoop.get().run();
+                assertEquals(1, probe.disconnectedCalls.get());
+            }
         }
     }
 }
