@@ -29,7 +29,7 @@ public class TransportProtocolTest extends AbstractSCNetTest {
     public void decodesFramesFragmentedAtEveryByte() throws Exception {
         try (Server server = new Server()) {
             server.getMessageProcessor().setReadBufferSize(1);
-            server.getMessageProcessor().registerMessage((short) 11, ValueMessage.class);
+            server.getMessageProcessor().registerMessage((short) 11, ValueMessage.class, ValueMessage::new);
             CountDownLatch messageReceived = new CountDownLatch(1);
             AtomicInteger receivedValue = new AtomicInteger();
             server.getMessageBus().listenAlways(ValueMessage.class, message -> {
@@ -71,7 +71,7 @@ public class TransportProtocolTest extends AbstractSCNetTest {
         try (Server server = new Server()) {
             server.getMessageProcessor().setMaxFrameSize(64);
             server.getMessageProcessor().setMaxStringLength(4);
-            server.getMessageProcessor().registerMessage((short) 3, StringMessage.class);
+            server.getMessageProcessor().registerMessage((short) 3, StringMessage.class, StringMessage::new);
             ConnectionProbe probe = new ConnectionProbe(1, 1);
             server.addConnectionListener(probe);
             server.bind(new InetSocketAddress("127.0.0.1", 0));
@@ -98,7 +98,7 @@ public class TransportProtocolTest extends AbstractSCNetTest {
     public void preservesOriginalHeaderAndPayloadEncoding() throws Exception {
         try (ServerSocketChannel rawServer = ServerSocketChannel.open(); Client client = new Client()) {
             rawServer.bind(new InetSocketAddress("127.0.0.1", 0));
-            client.getMessageProcessor().registerMessage((short) 7, StringMessage.class);
+            client.getMessageProcessor().registerMessage((short) 7, StringMessage.class, StringMessage::new);
             assertTrue(client.connect(rawServer.getLocalAddress()));
 
             try (SocketChannel accepted = rawServer.accept()) {
@@ -124,7 +124,7 @@ public class TransportProtocolTest extends AbstractSCNetTest {
         try (ServerSocketChannel rawServer = ServerSocketChannel.open(); Client client = new Client()) {
             rawServer.bind(new InetSocketAddress("127.0.0.1", 0));
             client.getMessageProcessor().setMaxFrameSize(4);
-            client.getMessageProcessor().registerMessage((short) 1, OversizedMessage.class);
+            client.getMessageProcessor().registerMessage((short) 1, OversizedMessage.class, OversizedMessage::new);
             ConnectionProbe probe = new ConnectionProbe(1, 1);
             client.addConnectionListener(probe);
             assertTrue(client.connect(rawServer.getLocalAddress()));

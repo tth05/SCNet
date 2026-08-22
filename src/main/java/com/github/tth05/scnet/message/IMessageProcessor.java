@@ -13,14 +13,13 @@ import java.util.function.Supplier;
 /**
  * A message processor will send enqueued messages and forward received messages to a {@link IMessageBus}.
  * <br>
- * To recognize messages, they will have to be registered with the message processor using
- * {@link #registerMessage(short, Class)}.
+ * To recognize messages, they must be registered with the message processor. Outgoing-only messages only need their
+ * class. Incoming and bidirectional messages also need a caller-provided factory.
  */
 public interface IMessageProcessor {
 
     /**
-     * Registers a message with this message processor, so it can be received/sent. Any message registered using this
-     * method requires a public default constructor. This allows for easy instantiation when receiving messages.
+     * Registers an outgoing-only message with this message processor.
      * <br>
      * The id may be anything greater than 0. 0 is reserved for {@link com.github.tth05.scnet.message.impl.EmptyMessage}
      *
@@ -29,11 +28,11 @@ public interface IMessageProcessor {
      * @throws IllegalArgumentException if the given {@code id} is smaller than 1 or there already is a message
      *                                  registered with the given id.
      */
-    <T extends AbstractMessage> void registerMessage(short id, @NotNull Class<T> messageClass);
+    <T extends AbstractMessageOutgoing> void registerMessage(short id, @NotNull Class<T> messageClass);
 
     /**
-     * Registers a message using a caller-provided factory for incoming instances. This variant does not require SCNet
-     * to access the message constructor and therefore also works when the message class belongs to another Java module.
+     * Registers an incoming or bidirectional message using a caller-provided factory for incoming instances. SCNet
+     * never reflects into the message class, so this works across Java module boundaries.
      *
      * @param id              the id for the message, has to be unique amongst all other messages
      * @param messageClass    the class of the message

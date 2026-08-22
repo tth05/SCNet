@@ -23,8 +23,8 @@ public class SendMessageTest extends AbstractSCNetTest {
         int number = ThreadLocalRandom.current().nextInt(Integer.MAX_VALUE);
         withClientAndServer((s, c) -> {
             //Register message
-            c.getMessageProcessor().registerMessage((short) 1, IntMessage.class);
-            s.getMessageProcessor().registerMessage((short) 1, IntMessage.class);
+            c.getMessageProcessor().registerMessage((short) 1, IntMessage.class, IntMessage::new);
+            s.getMessageProcessor().registerMessage((short) 1, IntMessage.class, IntMessage::new);
 
             //Listen for message
             AtomicInteger messagePayload = new AtomicInteger(-1);
@@ -67,10 +67,10 @@ public class SendMessageTest extends AbstractSCNetTest {
         int number = ThreadLocalRandom.current().nextInt(Integer.MAX_VALUE);
         withClientAndServer((s, c) -> {
             //Register message
-            c.getMessageProcessor().registerMessage((short) 1, IntMessage.class);
-            s.getMessageProcessor().registerMessage((short) 1, IntMessage.class);
-            c.getMessageProcessor().registerMessage((short) 2, RandomDataMessage.class);
-            s.getMessageProcessor().registerMessage((short) 2, RandomDataMessage.class);
+            c.getMessageProcessor().registerMessage((short) 1, IntMessage.class, IntMessage::new);
+            s.getMessageProcessor().registerMessage((short) 1, IntMessage.class, IntMessage::new);
+            c.getMessageProcessor().registerMessage((short) 2, RandomDataMessage.class, RandomDataMessage::new);
+            s.getMessageProcessor().registerMessage((short) 2, RandomDataMessage.class, RandomDataMessage::new);
 
             //Listen for message
             AtomicInteger messagePayload = new AtomicInteger(-1);
@@ -102,8 +102,8 @@ public class SendMessageTest extends AbstractSCNetTest {
     @Test
     public void testSendLargeMessageAcrossPartialReadsAndWrites() throws Exception {
         withClientAndServer((s, c) -> {
-            s.getMessageProcessor().registerMessage((short) 1, LargeMessage.class);
-            c.getMessageProcessor().registerMessage((short) 1, LargeMessage.class);
+            s.getMessageProcessor().registerMessage((short) 1, LargeMessage.class, LargeMessage::new);
+            c.getMessageProcessor().registerMessage((short) 1, LargeMessage.class, LargeMessage::new);
 
             s.getMessageProcessor().setReadBufferSize(257);
             c.getMessageProcessor().setReadBufferSize(251);

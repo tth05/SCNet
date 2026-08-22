@@ -14,10 +14,6 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.EOFException;
 import java.io.IOException;
-import java.lang.invoke.LambdaMetafactory;
-import java.lang.invoke.MethodHandle;
-import java.lang.invoke.MethodHandles;
-import java.lang.invoke.MethodType;
 import java.nio.ByteBuffer;
 import java.nio.channels.ClosedChannelException;
 import java.nio.channels.ClosedSelectorException;
@@ -97,14 +93,14 @@ public class DefaultMessageProcessor implements IMessageProcessor {
     private volatile int maxStringLength = DEFAULT_MAX_STRING_LENGTH;
 
     public DefaultMessageProcessor() {
-        RegisteredIncomingMessage emptyMessage = new RegisteredIncomingMessage(EmptyMessage.class);
+        RegisteredIncomingMessage emptyMessage = new RegisteredIncomingMessage(EmptyMessage.class, EmptyMessage::new);
         this.incomingMessages.put((short) 0, emptyMessage);
         this.outgoingMessages.put(EmptyMessage.class, (short) 0);
         this.registeredMessageIds.put((short) 0, EmptyMessage.class);
     }
 
     @Override
-    public <T extends AbstractMessage> void registerMessage(short id, @NotNull Class<T> messageClass) {
+    public <T extends AbstractMessageOutgoing> void registerMessage(short id, @NotNull Class<T> messageClass) {
         registerMessageInternal(id, messageClass, null);
     }
 
@@ -139,8 +135,11 @@ public class DefaultMessageProcessor implements IMessageProcessor {
             throw new IllegalArgumentException("outgoing message class " + messageClass.getName() + " is already registered");
         }
 
+        if (incoming && instanceFactory == null) {
+            throw new IllegalArgumentException("incoming message registration requires an instance factory");
+        }
         RegisteredIncomingMessage registeredIncoming = incoming
-                ? newIncomingMessage(messageClass, instanceFactory)
+                ? new RegisteredIncomingMessage(messageClass, instanceFactory)
                 : null;
 
         if (registeredIncoming != null) {
@@ -150,15 +149,6 @@ public class DefaultMessageProcessor implements IMessageProcessor {
             this.outgoingMessages.put(messageClass, id);
         }
         this.registeredMessageIds.put(id, messageClass);
-    }
-
-    private static RegisteredIncomingMessage newIncomingMessage(
-            @NotNull Class<? extends AbstractMessage> messageClass,
-            @Nullable Supplier<? extends AbstractMessage> instanceFactory
-    ) {
-        return instanceFactory == null
-                ? new RegisteredIncomingMessage(messageClass)
-                : new RegisteredIncomingMessage(messageClass, instanceFactory);
     }
 
     @Override
@@ -529,28 +519,6 @@ public class DefaultMessageProcessor implements IMessageProcessor {
         private final Class<? extends AbstractMessage> messageClass;
         @NotNull
         private final Supplier<? extends AbstractMessage> instanceSupplier;
-
-        private RegisteredIncomingMessage(@NotNull Class<? extends AbstractMessage> messageClass) {
-            this.messageClass = messageClass;
-            try {
-                MethodHandles.Lookup lookup = MethodHandles.lookup();
-                MethodHandle constructorHandle = lookup.findConstructor(messageClass, MethodType.methodType(void.class));
-                //noinspection unchecked
-                this.instanceSupplier = (Supplier<? extends AbstractMessage>) LambdaMetafactory.metafactory(
-                        lookup,
-                        "get",
-                        MethodType.methodType(Supplier.class),
-                        constructorHandle.type().generic(),
-                        constructorHandle,
-                        constructorHandle.type()
-                ).getTarget().invokeExact();
-            } catch (Throwable e) {
-                throw new IllegalArgumentException(
-                        "Unable to create constructor factory. Make sure a public default constructor exists",
-                        e
-                );
-            }
-        }
 
         private RegisteredIncomingMessage(
                 @NotNull Class<? extends AbstractMessage> messageClass,

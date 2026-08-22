@@ -15,7 +15,7 @@ public class MessageRegistrationTest {
     @Test
     public void rejectsAnOutgoingIdAlreadyUsedByAnIncomingMessage() {
         DefaultMessageProcessor processor = new DefaultMessageProcessor();
-        processor.registerMessage((short) 1, IncomingMessage.class);
+        processor.registerMessage((short) 1, IncomingMessage.class, IncomingMessage::new);
 
         assertThrows(
                 IllegalArgumentException.class,
