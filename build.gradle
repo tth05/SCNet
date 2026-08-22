@@ -41,6 +41,16 @@ publishing {
             from components.java
         }
     }
+    repositories {
+        maven {
+            name = 'packagecloud'
+            url = uri('https://packagecloud.io/tth05/repo/java/maven2/')
+            credentials {
+                username = System.getenv('PACKAGECLOUD_TOKEN')
+                password = ''
+            }
+        }
+    }
 }
 
 tasks.named('test', Test) {
