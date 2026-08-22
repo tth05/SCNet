@@ -3,6 +3,7 @@ package com.github.tth05.scnet.util;
 import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
 
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.SocketChannel;
 
@@ -12,31 +13,31 @@ public class ByteBufferUtils {
     }
 
     /**
-     * Tries to read from the given {@code socketChannel} into the given {@code buffer} until the buffer's
-     * {@link ByteBuffer#position()} reaches {@code toRead}.
+     * Reads while the channel makes progress. This method returns instead of spinning when a nonblocking channel would
+     * block. New transport code should retain partial state and wait for the next read-ready selector event.
      *
      * @param socketChannel the {@link SocketChannel} to read from
      * @param buffer        the buffer to read the data into
      * @param toRead        the position the buffer should reach before returning
-     * @return {@code false} if an exception was thrown during reading or end-of-stream was reached; {@code true}
-     * otherwise
+     * @return {@code true} if the requested position was reached; {@code false} on end-of-stream, I/O error, or when a
+     * nonblocking channel would block
      * @throws IllegalArgumentException if the given {@code buffer}'s {@link ByteBuffer#limit()} or
      *                                  {@link ByteBuffer#capacity()} is smaller than {@code toRead}
      */
+    @Deprecated
     public static boolean readAtLeastBlocking(@NotNull SocketChannel socketChannel, @NotNull ByteBuffer buffer, int toRead) {
         if (buffer.limit() < toRead || buffer.capacity() < toRead)
             throw new IllegalArgumentException("Impossible to read the requested amount of bytes");
 
         try {
-            int bytesRead = socketChannel.read(buffer);
-            while (bytesRead > 0 || buffer.position() < toRead) {
-                bytesRead = socketChannel.read(buffer);
-                if (bytesRead == -1)
+            while (buffer.position() < toRead) {
+                int bytesRead = socketChannel.read(buffer);
+                if (bytesRead <= 0) {
                     return false;
+                }
             }
-
             return true;
-        } catch (Throwable t) {
+        } catch (IOException e) {
             return false;
         }
     }

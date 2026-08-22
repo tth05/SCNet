@@ -2,6 +2,7 @@ package com.github.tth05.scnet.message;
 
 import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.nio.channels.Selector;
 import java.nio.channels.SocketChannel;
@@ -45,25 +46,34 @@ public interface IMessageProcessor {
     );
 
     /**
-     * Enqueues a message to be sent at some point in the future. If a non-registered message is enqueued,
-     * {@link #process(Selector, SocketChannel, IMessageBus)} when raise and exception when it tries to send it.
+     * Enqueues a message to be sent at some point in the future. Implementations should wake a blocked process loop.
+     * If a non-registered message is enqueued, {@link #process(Selector, SocketChannel, IMessageBus)} reports an error
+     * when it tries to send it.
      *
      * @param message the message to enqueue
      */
     void enqueueMessage(@NotNull AbstractMessage message);
 
     /**
-     * This method will write all enqueued messages to the {@code channel} and then read all available messages and
-     * forward them to the {@code messageBus}. The given {@code selector} will be used to check for
+     * Waits for I/O readiness, writes queued message data, and forwards complete incoming messages to the message bus.
+     * The given selector checks for
      * {@link java.nio.channels.SelectionKey#OP_READ} and {@link java.nio.channels.SelectionKey#OP_WRITE}.
      *
      * @param selector   the selector to select the read and write keys from
      * @param channel    the channel to read from and write to
      * @param messageBus the message bus which should process received messages
-     * @return {@code false} if something went wrong during reading or writing, and the process loop may not be able to
-     * continue in the future; {@code true} otherwise.
+     * @return {@code false} when the connection closed or an error prevents further processing; {@code true} otherwise
      */
     boolean process(@NotNull Selector selector, @NotNull SocketChannel channel, @NotNull IMessageBus messageBus);
+
+    /**
+     * Returns the error from the most recent failed {@link #process(Selector, SocketChannel, IMessageBus)} call.
+     * A {@code null} value means the peer closed the connection normally.
+     */
+    @Nullable
+    default Throwable getLastError() {
+        return null;
+    }
 
     /**
      * Resets all buffers and message queues of this message processor to put it back in its original state. This should
@@ -74,20 +84,22 @@ public interface IMessageProcessor {
     void reset();
 
     /**
+     * Retained for compatibility with processors which poll. Event-driven implementations may ignore this value.
+     *
      * @param delay the delay in milliseconds
      * @see #getProcessLoopDelay()
      */
     void setProcessLoopDelay(int delay);
 
     /**
-     * @return the delay that {@link #process(Selector, SocketChannel, IMessageBus)} will wait before performing any
-     * operations. This will save the CPU from unnecessary strain. Defaults to {@code 5}ms.
+     * @return the configured polling delay in milliseconds
      */
     @Contract(pure = true)
     int getProcessLoopDelay();
 
     /**
-     * This method will replace the current buffer with a new buffer of the given size.
+     * Sets the initial payload serialization buffer size. A frame may grow beyond this value up to the configured
+     * maximum frame size.
      *
      * @param size the new size
      * @see #getWriteBufferSize()
@@ -95,15 +107,13 @@ public interface IMessageProcessor {
     void setWriteBufferSize(int size);
 
     /**
-     * @return the size of the current write buffer. Queued packets will be written to this first, and flushed to the
-     * socket once it fills up. Increasing the size of this will help when sending a lot of data. Defaults to
-     * {@code 16384}.
+     * @return the initial payload serialization buffer size, which defaults to {@code 16384}
      */
     @Contract(pure = true)
     int getWriteBufferSize();
 
     /**
-     * This method will replace the current buffer with a new buffer of the given size.
+     * Sets the size of each nonblocking socket read chunk.
      *
      * @param size the new size
      * @see #getReadBufferSize()
@@ -111,10 +121,36 @@ public interface IMessageProcessor {
     void setReadBufferSize(int size);
 
     /**
-     * @return the size of the current read buffer. Available data will be read into this buffer and then processed into
-     * individual messages. Increasing the size of this will help when receiving a lot of data. Defaults to
-     * {@code 4096}.
+     * @return the socket read chunk size, which defaults to {@code 4096}
      */
     @Contract(pure = true)
     int getReadBufferSize();
+
+    /**
+     * Sets the maximum accepted or produced message payload size in bytes.
+     */
+    default void setMaxFrameSize(int size) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Returns the maximum accepted or produced message payload size in bytes.
+     */
+    default int getMaxFrameSize() {
+        return Integer.MAX_VALUE - 6;
+    }
+
+    /**
+     * Sets the maximum UTF-8 byte length accepted or produced by string stream methods.
+     */
+    default void setMaxStringLength(int size) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Returns the maximum UTF-8 byte length accepted or produced by string stream methods.
+     */
+    default int getMaxStringLength() {
+        return Integer.MAX_VALUE - 4;
+    }
 }

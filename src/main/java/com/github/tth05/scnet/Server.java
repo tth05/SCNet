@@ -13,218 +13,247 @@ import java.nio.channels.ClosedSelectorException;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
 import java.nio.channels.ServerSocketChannel;
-import java.util.ArrayList;
+import java.nio.channels.SocketChannel;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Objects;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executor;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class Server implements AutoCloseable {
 
-    /**
-     * The executor on which the server thread will run
-     */
     @NotNull
     private final Executor executor;
-
-    /**
-     * The message bus
-     */
     @NotNull
-    private IMessageBus messageBus = new DefaultMessageBus();
-    /**
-     * The message processor
-     */
+    private volatile IMessageBus messageBus = new DefaultMessageBus();
     @NotNull
-    private IMessageProcessor messageProcessor = new DefaultMessageProcessor();
-
-    /**
-     * These listeners are notified when a connection is established
-     */
-    private final List<IConnectionListener> connectionListeners = new ArrayList<>();
-
-    /**
-     * Selector used to check for {@link SelectionKey#OP_ACCEPT}.
-     */
+    private volatile IMessageProcessor messageProcessor = new DefaultMessageProcessor();
+    @NotNull
+    private final List<IConnectionListener> connectionListeners = new CopyOnWriteArrayList<>();
+    @NotNull
     private final Selector selector;
-    /**
-     * Internal socket channel used to accept clients
-     */
+    @NotNull
     private final ServerSocketChannel serverSocketChannel;
+    private final AtomicBoolean bound = new AtomicBoolean();
+    private final AtomicBoolean closed = new AtomicBoolean();
 
-    /**
-     * The currently connected client
-     */
     @Nullable
-    private ServerClient client;
+    private volatile ServerClient client;
+    @Nullable
+    private volatile Throwable lastConnectionError;
 
     public Server() {
-        this(new ThreadPoolExecutor(1, 1,
-                0L, TimeUnit.MILLISECONDS,
-                new LinkedBlockingQueue<>(), r -> {
-            Thread t = new Thread(r);
-            t.setName("SCNet Server");
-            t.setDaemon(true);
-            return t;
-        }));
+        this(createDefaultExecutor());
     }
 
     /**
-     * @param executor an executor on which the server thread will run. This executor needs to have one available
-     *                 thread.
+     * @param executor an executor which can dedicate one thread to accepting connections while the server is open
      */
     public Server(@NotNull Executor executor) {
-        this.executor = executor;
+        this.executor = Objects.requireNonNull(executor, "executor");
         try {
             this.selector = Selector.open();
             this.serverSocketChannel = ServerSocketChannel.open();
             this.serverSocketChannel.configureBlocking(false);
             this.serverSocketChannel.register(this.selector, SelectionKey.OP_ACCEPT);
         } catch (IOException e) {
-            throw new RuntimeException(e);
+            throw new IllegalStateException("Unable to initialize server", e);
         }
     }
 
     /**
-     * Binds this server to the given {@code address} and starts listening for clients.
-     *
-     * @param address the address to bind this server to
+     * Binds this server and starts its accept event loop.
      */
-    public void bind(SocketAddress address) {
+    public void bind(@NotNull SocketAddress address) {
+        Objects.requireNonNull(address, "address");
+        if (!this.bound.compareAndSet(false, true)) {
+            throw new IllegalStateException("Server is already bound");
+        }
+        if (this.closed.get()) {
+            throw new IllegalStateException("Server is closed");
+        }
+
         try {
             this.serverSocketChannel.bind(address, 1);
-        } catch (IOException e) {
-            throw new IllegalStateException(e);
+            this.executor.execute(this::runAcceptLoop);
+        } catch (IOException | RuntimeException e) {
+            this.lastConnectionError = e;
+            close();
+            throw new IllegalStateException("Unable to bind server", e);
         }
-
-        this.executor.execute(() -> {
-            while (this.selector.isOpen()) {
-                acceptClient();
-                if (this.client != null) {
-                    if (!this.client.process()) {
-                        this.messageProcessor.reset();
-                        this.client.close();
-                        this.client = null;
-                    }
-                }
-            }
-        });
     }
 
-    /**
-     * Queries this {@link #selector} for {@link SelectionKey#OP_ACCEPT} and accepts any new clients. If the connection
-     * with the current client is still open, any new clients trying to connect will get their connection closed.
-     */
-    private void acceptClient() {
-        if (!this.selector.isOpen())
-            return;
-
+    private void runAcceptLoop() {
         try {
-            int select;
-            if (this.client == null) //We add some delay here to save the processor
-                select = this.selector.select(10);
-            else
-                select = this.selector.selectNow();
-
-            if (select < 1)
-                return;
-
-            for (Iterator<SelectionKey> iterator = this.selector.selectedKeys().iterator(); iterator.hasNext(); ) {
-                SelectionKey key = iterator.next();
-                if (key.isAcceptable()) {
+            while (!this.closed.get() && this.selector.isOpen()) {
+                this.selector.select();
+                for (Iterator<SelectionKey> iterator = this.selector.selectedKeys().iterator(); iterator.hasNext(); ) {
+                    SelectionKey key = iterator.next();
                     iterator.remove();
-
-                    //Check if the current client is still valid
-                    boolean hasClient = this.client != null && this.client.isConnected();
-                    if (!hasClient)
-                        this.client = null;
-
-                    if (!hasClient) { //Accept a new client
-                        this.messageProcessor.reset();
-
-                        this.client = new ServerClient(
-                                this.serverSocketChannel.accept(),
-                                this.connectionListeners,
-                                getMessageProcessor(),
-                                getMessageBus()
-                        );
-                    } else { //Block other clients trying to connect
-                        this.serverSocketChannel.accept().close();
+                    if (key.isAcceptable()) {
+                        acceptAvailableClients();
                     }
-                } else {
-                    throw new IllegalStateException("Unknown key " + key);
                 }
             }
-        } catch (IOException e) {
-            e.printStackTrace();
         } catch (ClosedSelectorException ignored) {
+        } catch (IOException e) {
+            if (!this.closed.get()) {
+                this.lastConnectionError = e;
+                notifyConnectionError(e);
+                close();
+            }
         }
     }
 
-    /**
-     * @return {@code true} if a client is connected and the connection is open; {@code false} otherwise
-     */
-    public boolean isClientConnected() {
-        return this.client != null && this.client.isConnected();
+    private void acceptAvailableClients() throws IOException {
+        SocketChannel accepted;
+        while ((accepted = this.serverSocketChannel.accept()) != null) {
+            ServerClient currentClient = this.client;
+            if (currentClient != null && currentClient.isConnected()) {
+                accepted.close();
+                continue;
+            }
+
+            if (currentClient != null) {
+                accepted.close();
+                continue;
+            }
+
+            this.messageProcessor.reset();
+            try {
+                this.client = new ServerClient(
+                        accepted,
+                        this.connectionListeners,
+                        this.messageProcessor,
+                        this.messageBus,
+                        this::onClientClosed
+                );
+            } catch (IOException | RuntimeException e) {
+                accepted.close();
+                this.lastConnectionError = e;
+                notifyConnectionError(e);
+            }
+        }
     }
 
-    /**
-     * Closes the connection to the current client
-     */
+    private void onClientClosed(ServerClient closedClient) {
+        if (this.client == closedClient) {
+            this.lastConnectionError = closedClient.getLastConnectionError();
+            this.client = null;
+        }
+    }
+
+    public boolean isClientConnected() {
+        ServerClient currentClient = this.client;
+        return currentClient != null && currentClient.isConnected();
+    }
+
     public void closeClient() {
-        if (this.client != null)
-            this.client.close();
+        ServerClient currentClient = this.client;
+        if (currentClient != null) {
+            currentClient.close();
+        }
+    }
+
+    @NotNull
+    public SocketAddress getLocalAddress() {
+        try {
+            SocketAddress address = this.serverSocketChannel.getLocalAddress();
+            if (address == null) {
+                throw new IllegalStateException("Server is not bound");
+            }
+            return address;
+        } catch (IOException e) {
+            throw new IllegalStateException("Unable to query server address", e);
+        }
+    }
+
+    @Nullable
+    public Throwable getLastConnectionError() {
+        return this.lastConnectionError;
     }
 
     @Override
     public void close() {
-        try {
-            this.selector.close();
-            this.serverSocketChannel.close();
-        } catch (IOException e) {
-            e.printStackTrace();
+        if (!this.closed.compareAndSet(false, true)) {
+            return;
         }
+
+        this.selector.wakeup();
+        ServerClient currentClient = this.client;
+        if (currentClient != null) {
+            currentClient.close();
+        }
+        closeQuietly(this.serverSocketChannel);
+        closeQuietly(this.selector);
     }
 
-    /**
-     * Adds a listener that is notified about connection events.
-     */
-    public void addConnectionListener(IConnectionListener listener) {
-        synchronized (this.connectionListeners) {
-            this.connectionListeners.add(listener);
-            if (this.client != null)
-                this.client.addConnectionListener(listener);
-        }
+    public void addConnectionListener(@NotNull IConnectionListener listener) {
+        this.connectionListeners.add(Objects.requireNonNull(listener, "listener"));
     }
 
-    /**
-     * Removes a connection listener
-     */
-    public void removeConnectionListener(IConnectionListener listener) {
-        synchronized (this.connectionListeners) {
-            this.connectionListeners.remove(listener);
-            if (this.client != null)
-                this.client.removeConnectionListener(listener);
+    public void removeConnectionListener(@NotNull IConnectionListener listener) {
+        this.connectionListeners.remove(listener);
+    }
+
+    private void notifyConnectionError(Throwable cause) {
+        for (IConnectionListener listener : this.connectionListeners) {
+            try {
+                listener.onConnectionError(cause);
+            } catch (Throwable ignored) {
+            }
         }
     }
 
     public void setMessageProcessor(@NotNull IMessageProcessor messageProcessor) {
-        this.messageProcessor = messageProcessor;
+        if (this.client != null) {
+            throw new IllegalStateException("Cannot replace the message processor while a client is connected");
+        }
+        this.messageProcessor = Objects.requireNonNull(messageProcessor, "messageProcessor");
     }
 
     public void setMessageBus(@NotNull IMessageBus messageBus) {
-        this.messageBus = messageBus;
+        if (this.client != null) {
+            throw new IllegalStateException("Cannot replace the message bus while a client is connected");
+        }
+        this.messageBus = Objects.requireNonNull(messageBus, "messageBus");
     }
 
     @NotNull
     public IMessageProcessor getMessageProcessor() {
-        return messageProcessor;
+        return this.messageProcessor;
     }
 
     @NotNull
     public IMessageBus getMessageBus() {
-        return messageBus;
+        return this.messageBus;
+    }
+
+    private static Executor createDefaultExecutor() {
+        ThreadPoolExecutor executor = new ThreadPoolExecutor(
+                0,
+                1,
+                1L,
+                TimeUnit.SECONDS,
+                new LinkedBlockingQueue<>(),
+                runnable -> {
+                    Thread thread = new Thread(runnable, "SCNet Server Accept");
+                    thread.setDaemon(true);
+                    return thread;
+                }
+        );
+        executor.allowCoreThreadTimeOut(true);
+        return executor;
+    }
+
+    private static void closeQuietly(AutoCloseable closeable) {
+        try {
+            closeable.close();
+        } catch (Exception ignored) {
+        }
     }
 }

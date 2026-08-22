@@ -1,6 +1,6 @@
 package com.github.tth05.scnet;
 
-public interface IConnectedListener extends IConnectionListener{
+public interface IConnectedListener extends IConnectionListener {
 
     @Override
     default void onDisconnected() {}

@@ -2,10 +2,14 @@ package com.github.tth05.scnet;
 
 import org.jetbrains.annotations.NotNull;
 
+import java.io.IOException;
 import java.net.ConnectException;
 import java.net.SocketAddress;
 import java.nio.channels.SelectionKey;
+import java.nio.channels.Selector;
+import java.nio.channels.SocketChannel;
 import java.util.Iterator;
+import java.util.Objects;
 import java.util.concurrent.Executor;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -13,108 +17,147 @@ import java.util.concurrent.TimeUnit;
 
 public class Client extends AbstractClient {
 
-    /**
-     * The executor on which the client thread will run
-     */
+    private static final int CONNECT_TIMEOUT_MILLIS = 1000;
+
     @NotNull
     private final Executor executor;
 
     public Client() {
-        this(new ThreadPoolExecutor(1, 1,
-                0L, TimeUnit.MILLISECONDS,
-                new LinkedBlockingQueue<>(), r -> {
-            Thread t = new Thread(r);
-            t.setName("SCNet Client");
-            t.setDaemon(true);
-            return t;
-        }));
+        this(createDefaultExecutor());
     }
 
     /**
-     * @param executor an executor on which the client thread will run. This executor needs to have one available
-     *                 thread.
+     * @param executor an executor which can dedicate one thread to the client while it is connected
      */
     public Client(@NotNull Executor executor) {
-        super();
-        this.executor = executor;
+        this.executor = Objects.requireNonNull(executor, "executor");
     }
 
     /**
-     * Tries to connect this client to the given {@code address} using {@link #connect(SocketAddress)}. After each
-     * failed attempt, the current thread will wait at least {@code timeout} milliseconds.
-     *
-     * @param address the address to connect to
-     * @param timeout the timeout in milliseconds between each failed attempt
-     * @param retries the number of times the method should try to establish a connection
-     * @return {@code true} if the connection succeeded; {@code false} otherwise
+     * Tries to connect repeatedly. The current thread waits between failed attempts.
      */
     public boolean connect(@NotNull SocketAddress address, int timeout, int retries) {
-        for (int i = 0; i < retries; i++) {
-            if (connect(address))
-                return true;
-            try {
-                Thread.sleep(timeout);
-            } catch (InterruptedException ignored) {}
+        Objects.requireNonNull(address, "address");
+        if (timeout < 0) {
+            throw new IllegalArgumentException("timeout cannot be negative");
+        }
+        if (retries < 0) {
+            throw new IllegalArgumentException("retries cannot be negative");
         }
 
+        for (int i = 0; i < retries; i++) {
+            if (connect(address)) {
+                return true;
+            }
+            if (i + 1 >= retries) {
+                break;
+            }
+            try {
+                Thread.sleep(timeout);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
         return false;
     }
 
     /**
-     * Tries to connect this client to the given {@code address}.
-     *
-     * @param address the address to connect to
-     * @return {@code true} if the connection succeeded; {@code false} otherwise
+     * Tries to connect this client to the given address.
      */
-    public boolean connect(@NotNull SocketAddress address) {
+    public synchronized boolean connect(@NotNull SocketAddress address) {
+        Objects.requireNonNull(address, "address");
         try {
-            close();
-            initChannelAndSelector(null);
+            closeAndAwaitEventLoop();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
 
-            this.socketChannel.register(this.selector, SelectionKey.OP_CONNECT);
-            this.socketChannel.connect(address);
+        setConnecting();
+        Selector newSelector = null;
+        SocketChannel newChannel = null;
+        try {
+            newSelector = Selector.open();
+            newChannel = SocketChannel.open();
+            newChannel.configureBlocking(false);
+            SelectionKey connectKey = newChannel.register(newSelector, SelectionKey.OP_CONNECT);
 
-            int selected = this.selector.select(1000);
-            if (selected < 1)
+            boolean connectedImmediately = newChannel.connect(address);
+            if (!connectedImmediately && !awaitConnection(newSelector, newChannel)) {
+                setConnectFailed(new ConnectException("Connection timed out"));
+                closeQuietly(newChannel);
+                closeQuietly(newSelector);
                 return false;
-
-            for (Iterator<SelectionKey> iterator = this.selector.selectedKeys().iterator(); iterator.hasNext(); ) {
-                SelectionKey key = iterator.next();
-                if (!key.isConnectable())
-                    throw new IllegalStateException("Invalid key");
-
-                key.interestOps(SelectionKey.OP_READ | SelectionKey.OP_WRITE);
-                iterator.remove();
             }
 
-            if (!this.socketChannel.finishConnect())
-                return false;
+            connectKey.interestOps(SelectionKey.OP_READ);
+            getMessageProcessor().reset();
+            installConnectedChannel(newSelector, newChannel);
+            startEventLoop(this.executor, null);
+            return true;
+        } catch (ConnectException e) {
+            setConnectFailed(e);
+            closeQuietly(newChannel);
+            closeQuietly(newSelector);
+            return false;
+        } catch (IOException e) {
+            setConnectFailed(e);
+            closeQuietly(newChannel);
+            closeQuietly(newSelector);
+            return false;
+        } catch (RuntimeException e) {
+            setConnectFailed(e);
+            closeQuietly(newChannel);
+            closeQuietly(newSelector);
+            throw e;
+        }
+    }
 
-            if (this.socketChannel.isConnected()) {
-                this.executor.execute(() -> {
-                    this.messageProcessor.reset();
+    @Override
+    public synchronized void close() {
+        super.close();
+    }
 
-                    this.connectionListeners.forEach(IConnectionListener::onConnected);
+    private static boolean awaitConnection(Selector selector, SocketChannel channel) throws IOException {
+        if (selector.select(CONNECT_TIMEOUT_MILLIS) == 0) {
+            return false;
+        }
 
-                    while (this.selector.isOpen()) {
-                        if (!this.process()) {
-                            this.messageProcessor.reset();
-                            this.close();
-                            onDisconnected();
-                            return;
-                        }
-                    }
-                });
+        for (Iterator<SelectionKey> iterator = selector.selectedKeys().iterator(); iterator.hasNext(); ) {
+            SelectionKey key = iterator.next();
+            iterator.remove();
+            if (key.isConnectable() && channel.finishConnect()) {
                 return true;
             }
+        }
+        return channel.isConnected();
+    }
 
-            return false;
-        } catch (ConnectException e) {
-            close();
-            return false;
-        } catch (Throwable e) {
-            close();
-            throw new RuntimeException(e);
+    private static Executor createDefaultExecutor() {
+        ThreadPoolExecutor executor = new ThreadPoolExecutor(
+                0,
+                1,
+                1L,
+                TimeUnit.SECONDS,
+                new LinkedBlockingQueue<>(),
+                runnable -> {
+                    Thread thread = new Thread(runnable, "SCNet Client");
+                    thread.setDaemon(true);
+                    return thread;
+                }
+        );
+        executor.allowCoreThreadTimeOut(true);
+        return executor;
+    }
+
+    private static void closeQuietly(AutoCloseable closeable) {
+        if (closeable == null) {
+            return;
+        }
+        try {
+            closeable.close();
+        } catch (Exception ignored) {
         }
     }
 }

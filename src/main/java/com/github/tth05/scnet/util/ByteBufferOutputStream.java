@@ -14,29 +14,47 @@ import java.nio.charset.StandardCharsets;
  */
 public class ByteBufferOutputStream {
 
+    public static final int DEFAULT_MAX_STRING_BYTES = 16 * 1024 * 1024;
+
     /**
      * The internal {@link ByteBuffer} used to write bytes to.
      */
     @NotNull
     private ByteBuffer buf;
 
+    private final int maxCapacity;
+
+    private final int maxStringBytes;
+
     public ByteBufferOutputStream() {
         this(32);
     }
 
     public ByteBufferOutputStream(int size) {
-        if (size < 0)
-            throw new IllegalArgumentException("Negative initial size: " + size);
+        this(size, Integer.MAX_VALUE - 8, DEFAULT_MAX_STRING_BYTES);
+    }
 
+    public ByteBufferOutputStream(int size, int maxCapacity, int maxStringBytes) {
+        validateLimits(size, maxCapacity, maxStringBytes);
         this.buf = ByteBuffer.allocate(size);
+        this.maxCapacity = maxCapacity;
+        this.maxStringBytes = maxStringBytes;
     }
 
     public ByteBufferOutputStream(@NotNull ByteBuffer buffer) {
+        this(buffer, Integer.MAX_VALUE - 8, DEFAULT_MAX_STRING_BYTES);
+    }
+
+    public ByteBufferOutputStream(@NotNull ByteBuffer buffer, int maxCapacity, int maxStringBytes) {
         if (buffer.isDirect())
             throw new IllegalArgumentException("Direct buffer not allowed");
 
+        validateLimits(buffer.capacity(), maxCapacity, maxStringBytes);
+
         buffer.clear();
         this.buf = buffer;
+        this.maxCapacity = maxCapacity;
+        this.maxStringBytes = maxStringBytes;
     }
 
     public void writeByte(int b) {
@@ -80,6 +98,11 @@ public class ByteBufferOutputStream {
      */
     public void writeString(String s) {
         byte[] bytes = s.getBytes(StandardCharsets.UTF_8);
+        if (bytes.length > this.maxStringBytes) {
+            throw new IllegalArgumentException(
+                    "String length " + bytes.length + " exceeds maximum " + this.maxStringBytes
+            );
+        }
         ensureFits(bytes.length + 4);
         this.buf.putInt(bytes.length);
         this.buf.put(bytes);
@@ -89,10 +112,33 @@ public class ByteBufferOutputStream {
      * Adjusts the internal buffer so that it can hold at least {@code i} more bytes by doubling its size if needed.
      */
     private void ensureFits(int i) {
+        if (i < 0) {
+            throw new IllegalArgumentException("Additional size cannot be negative");
+        }
         int position = this.buf.position();
-        if (this.buf.capacity() < position + i) {
+        long required = (long) position + i;
+        if (required > this.maxCapacity) {
+            throw new IllegalArgumentException(
+                    "Serialized message size " + required + " exceeds maximum " + this.maxCapacity
+            );
+        }
+        if (this.buf.capacity() < required) {
             this.buf.flip();
-            this.buf = ByteBufferUtils.moveToNewBuffer(this.buf, (position + i) * 2);
+            long doubled = Math.max(1L, (long) this.buf.capacity() * 2L);
+            int newCapacity = (int) Math.min(this.maxCapacity, Math.max(required, doubled));
+            this.buf = ByteBufferUtils.moveToNewBuffer(this.buf, newCapacity);
+        }
+    }
+
+    private static void validateLimits(int initialSize, int maxCapacity, int maxStringBytes) {
+        if (initialSize < 0) {
+            throw new IllegalArgumentException("Negative initial size: " + initialSize);
+        }
+        if (maxCapacity < initialSize) {
+            throw new IllegalArgumentException("maxCapacity cannot be smaller than the initial size");
+        }
+        if (maxStringBytes < 0) {
+            throw new IllegalArgumentException("maxStringBytes cannot be negative");
         }
     }
 

@@ -1,9 +1,13 @@
 package com.github.tth05.scnet.message.impl;
 
-import com.github.tth05.scnet.message.*;
+import com.github.tth05.scnet.message.AbstractMessage;
+import com.github.tth05.scnet.message.AbstractMessageIncoming;
+import com.github.tth05.scnet.message.AbstractMessageOutgoing;
+import com.github.tth05.scnet.message.IMessageBus;
+import com.github.tth05.scnet.message.IMessageProcessor;
+import com.github.tth05.scnet.message.MalformedFrameException;
 import com.github.tth05.scnet.util.ByteBufferInputStream;
 import com.github.tth05.scnet.util.ByteBufferOutputStream;
-import com.github.tth05.scnet.util.ByteBufferUtils;
 import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -14,6 +18,8 @@ import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
 import java.nio.ByteBuffer;
+import java.nio.channels.ClosedChannelException;
+import java.nio.channels.ClosedSelectorException;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
 import java.nio.channels.SocketChannel;
@@ -22,62 +28,55 @@ import java.util.Iterator;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Queue;
-import java.util.concurrent.ConcurrentLinkedDeque;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.function.Supplier;
 
 /**
- * A default implementation of {@link IMessageProcessor}.
+ * A nonblocking framed message processor. Frames retain the original two-byte id and four-byte payload length header.
  */
 public class DefaultMessageProcessor implements IMessageProcessor {
 
-    /**
-     * The length in bytes of each message header.
-     */
-    private static final int MESSAGE_HEADER_BYTES = Byte.BYTES * 6;
+    public static final int DEFAULT_MAX_FRAME_SIZE = 16 * 1024 * 1024;
+    public static final int DEFAULT_MAX_STRING_LENGTH = 16 * 1024 * 1024;
 
-    /**
-     * A map of registered incoming messages. The key is the id of the message.
-     */
-    @NotNull
-    private final Map<Short, RegisteredIncomingMessage> incomingMessages = new HashMap<>();
-    /**
-     * A map of registered outgoing messages. The key is the message class, and the value is the id for that message.
-     */
-    @NotNull
-    private final Map<Class<? extends AbstractMessage>, Short> outgoingMessages = new HashMap<>();
+    private static final int MESSAGE_HEADER_BYTES = Short.BYTES + Integer.BYTES;
 
-    /**
-     * A queue containing all messages which are queued for sending.
-     */
     @NotNull
-    private final Queue<AbstractMessage> outgoingMessageQueue = new ConcurrentLinkedDeque<>();
+    private final Map<Short, RegisteredIncomingMessage> incomingMessages = new ConcurrentHashMap<>();
+    @NotNull
+    private final Map<Class<? extends AbstractMessage>, Short> outgoingMessages = new ConcurrentHashMap<>();
+    @NotNull
+    private final Map<Short, Class<? extends AbstractMessage>> registeredMessageIds = new HashMap<>();
+    @NotNull
+    private final Queue<AbstractMessage> outgoingMessageQueue = new ConcurrentLinkedQueue<>();
 
-    /**
-     * A buffer for messages to allow for batch writing of multiple queued messages.
-     */
     @NotNull
-    private ByteBuffer writeBuffer = ByteBuffer.allocateDirect(16384);
-    /**
-     * A buffer into which a single message is written. The data of this buffer is then transferred into
-     * {@link #writeBuffer}.
-     */
+    private final ByteBuffer headerBuffer = ByteBuffer.allocate(MESSAGE_HEADER_BYTES);
     @NotNull
-    private ByteBuffer messageWriteBuffer = ByteBuffer.allocate(512);
-    /**
-     * A buffer used for batch reading.
-     */
-    @NotNull
-    private ByteBuffer readBuffer = ByteBuffer.allocateDirect(4096);
+    private ByteBuffer readChunk = ByteBuffer.allocateDirect(4096);
+    @Nullable
+    private ByteBuffer incomingPayload;
+    private short incomingMessageId;
 
-    /**
-     * @see #getProcessLoopDelay()
-     */
-    private int processLoopDelay = 5;
+    @Nullable
+    private ByteBuffer pendingWrite;
+    @Nullable
+    private volatile Selector activeSelector;
+    @Nullable
+    private volatile Throwable lastError;
+
+    private volatile int processLoopDelay = 5;
+    private volatile int writeBufferSize = 16384;
+    private volatile int readBufferSize = 4096;
+    private volatile int maxFrameSize = DEFAULT_MAX_FRAME_SIZE;
+    private volatile int maxStringLength = DEFAULT_MAX_STRING_LENGTH;
 
     public DefaultMessageProcessor() {
-        //Register noop message
-        this.incomingMessages.put((short) 0, new RegisteredIncomingMessage(EmptyMessage.class));
+        RegisteredIncomingMessage emptyMessage = new RegisteredIncomingMessage(EmptyMessage.class);
+        this.incomingMessages.put((short) 0, emptyMessage);
         this.outgoingMessages.put(EmptyMessage.class, (short) 0);
+        this.registeredMessageIds.put((short) 0, EmptyMessage.class);
     }
 
     @Override
@@ -94,27 +93,39 @@ public class DefaultMessageProcessor implements IMessageProcessor {
         registerMessageInternal(id, messageClass, Objects.requireNonNull(instanceFactory, "instanceFactory"));
     }
 
-    private <T extends AbstractMessage> void registerMessageInternal(
+    private synchronized <T extends AbstractMessage> void registerMessageInternal(
             short id,
             @NotNull Class<T> messageClass,
             @Nullable Supplier<? extends T> instanceFactory
     ) {
         Objects.requireNonNull(messageClass, "messageClass");
-        if (id < 1)
+        if (id < 1) {
             throw new IllegalArgumentException("id has to be greater than zero");
-        if (this.incomingMessages.containsKey(id) || this.outgoingMessages.containsKey(id))
-            throw new IllegalArgumentException("message with id " + id + " is already registered");
-
-        if (AbstractMessageIncoming.class.isAssignableFrom(messageClass)) {
-            this.incomingMessages.put(id, newIncomingMessage(messageClass, instanceFactory));
-        } else if (AbstractMessageOutgoing.class.isAssignableFrom(messageClass)) {
-            this.outgoingMessages.put(messageClass, id);
-        } else if (AbstractMessage.class.isAssignableFrom(messageClass)) {
-            this.incomingMessages.put(id, newIncomingMessage(messageClass, instanceFactory));
-            this.outgoingMessages.put(messageClass, id);
-        } else {
-            throw new IllegalArgumentException("messageClass does not implement AbstractMessage");
         }
+        if (this.registeredMessageIds.containsKey(id)) {
+            throw new IllegalArgumentException("message with id " + id + " is already registered");
+        }
+
+        boolean incoming = !AbstractMessageOutgoing.class.isAssignableFrom(messageClass);
+        boolean outgoing = !AbstractMessageIncoming.class.isAssignableFrom(messageClass);
+        if (!incoming && !outgoing) {
+            throw new IllegalArgumentException("message class cannot be both incoming-only and outgoing-only");
+        }
+        if (outgoing && this.outgoingMessages.containsKey(messageClass)) {
+            throw new IllegalArgumentException("outgoing message class " + messageClass.getName() + " is already registered");
+        }
+
+        RegisteredIncomingMessage registeredIncoming = incoming
+                ? newIncomingMessage(messageClass, instanceFactory)
+                : null;
+
+        if (registeredIncoming != null) {
+            this.incomingMessages.put(id, registeredIncoming);
+        }
+        if (outgoing) {
+            this.outgoingMessages.put(messageClass, id);
+        }
+        this.registeredMessageIds.put(id, messageClass);
     }
 
     private static RegisteredIncomingMessage newIncomingMessage(
@@ -128,243 +139,328 @@ public class DefaultMessageProcessor implements IMessageProcessor {
 
     @Override
     public void enqueueMessage(@NotNull AbstractMessage message) {
-        this.outgoingMessageQueue.offer(message);
+        this.outgoingMessageQueue.offer(Objects.requireNonNull(message, "message"));
+        Selector selector = this.activeSelector;
+        if (selector != null) {
+            selector.wakeup();
+        }
     }
 
     @Override
     public boolean process(@NotNull Selector selector, @NotNull SocketChannel channel, @NotNull IMessageBus messageBus) {
-        try {
-            Thread.sleep(this.processLoopDelay);
+        Objects.requireNonNull(selector, "selector");
+        Objects.requireNonNull(channel, "channel");
+        Objects.requireNonNull(messageBus, "messageBus");
+        this.activeSelector = selector;
+        this.lastError = null;
 
-            int selected = selector.select(5);
-            if (selected < 1)
-                return true;
+        try {
+            updateWriteInterest(selector, channel);
+            selector.select();
 
             for (Iterator<SelectionKey> iterator = selector.selectedKeys().iterator(); iterator.hasNext(); ) {
                 SelectionKey key = iterator.next();
-
-                if (key.isWritable() && !this.outgoingMessageQueue.isEmpty()) {
-                    doWrite(channel);
-                }
-                if (key.isReadable()) {
-                    if (!doRead(channel, messageBus))
-                        return false;
-                }
-
                 iterator.remove();
+                if (!key.isValid() || key.channel() != channel) {
+                    continue;
+                }
+                if (key.isReadable() && !readAvailable(channel, messageBus)) {
+                    return false;
+                }
+                if (key.isValid() && key.isWritable()) {
+                    writeAvailable(channel);
+                }
             }
 
+            updateWriteInterest(selector, channel);
             return true;
-        } catch (IOException | InterruptedException e) {
-            e.printStackTrace();
+        } catch (ClosedSelectorException | ClosedChannelException e) {
+            return false;
+        } catch (Throwable t) {
+            if (channel.isOpen() && selector.isOpen()) {
+                this.lastError = t;
+            }
             return false;
         }
+    }
+
+    @Override
+    @Nullable
+    public Throwable getLastError() {
+        return this.lastError;
+    }
+
+    private void updateWriteInterest(Selector selector, SocketChannel channel) throws ClosedChannelException {
+        SelectionKey key = channel.keyFor(selector);
+        if (key == null) {
+            channel.register(selector, SelectionKey.OP_READ);
+            key = channel.keyFor(selector);
+        }
+        if (key == null || !key.isValid()) {
+            throw new ClosedChannelException();
+        }
+
+        int desiredOps = SelectionKey.OP_READ;
+        if (this.pendingWrite != null || !this.outgoingMessageQueue.isEmpty()) {
+            desiredOps |= SelectionKey.OP_WRITE;
+        }
+        if (key.interestOps() != desiredOps) {
+            key.interestOps(desiredOps);
+        }
+    }
+
+    private void writeAvailable(SocketChannel channel) throws IOException {
+        while (true) {
+            if (this.pendingWrite == null) {
+                this.pendingWrite = serializeNextFrame();
+                if (this.pendingWrite == null) {
+                    return;
+                }
+            }
+
+            int written = channel.write(this.pendingWrite);
+            if (written == 0 || this.pendingWrite.hasRemaining()) {
+                return;
+            }
+            this.pendingWrite = null;
+        }
+    }
+
+    @Nullable
+    private ByteBuffer serializeNextFrame() throws IOException {
+        AbstractMessage message = this.outgoingMessageQueue.poll();
+        if (message == null) {
+            return null;
+        }
+
+        Short messageId = this.outgoingMessages.get(message.getClass());
+        if (messageId == null) {
+            throw new IllegalArgumentException("Message " + message.getClass().getName() + " is not registered");
+        }
+
+        int initialSize = Math.min(this.writeBufferSize, this.maxFrameSize);
+        ByteBufferOutputStream messageStream = new ByteBufferOutputStream(
+                initialSize,
+                this.maxFrameSize,
+                this.maxStringLength
+        );
+        try {
+            message.write(messageStream);
+        } catch (Throwable t) {
+            throw new MalformedFrameException("Unable to serialize message " + message.getClass().getName(), t);
+        }
+
+        ByteBuffer payload = messageStream.getBuffer();
+        int size = payload.position();
+        ByteBuffer frame = ByteBuffer.allocateDirect(MESSAGE_HEADER_BYTES + size);
+        frame.putShort(messageId);
+        frame.putInt(size);
+        payload.flip();
+        frame.put(payload);
+        frame.flip();
+        return frame;
+    }
+
+    private boolean readAvailable(SocketChannel channel, IMessageBus messageBus) throws IOException {
+        if (this.readChunk.capacity() != this.readBufferSize) {
+            this.readChunk = ByteBuffer.allocateDirect(this.readBufferSize);
+        }
+
+        while (true) {
+            this.readChunk.clear();
+            int bytesRead = channel.read(this.readChunk);
+            if (bytesRead == -1) {
+                return false;
+            }
+            if (bytesRead == 0) {
+                return true;
+            }
+
+            this.readChunk.flip();
+            consumeReadChunk(this.readChunk, messageBus);
+        }
+    }
+
+    private void consumeReadChunk(ByteBuffer source, IMessageBus messageBus) throws IOException {
+        while (source.hasRemaining()) {
+            if (this.incomingPayload == null) {
+                transfer(source, this.headerBuffer);
+                if (this.headerBuffer.hasRemaining()) {
+                    return;
+                }
+
+                this.headerBuffer.flip();
+                this.incomingMessageId = this.headerBuffer.getShort();
+                int payloadSize = this.headerBuffer.getInt();
+                this.headerBuffer.clear();
+                if (payloadSize < 0) {
+                    throw new MalformedFrameException("Negative frame payload length: " + payloadSize);
+                }
+                if (payloadSize > this.maxFrameSize) {
+                    throw new MalformedFrameException(
+                            "Frame payload length " + payloadSize + " exceeds maximum " + this.maxFrameSize
+                    );
+                }
+
+                this.incomingPayload = ByteBuffer.allocate(payloadSize);
+                if (payloadSize == 0) {
+                    dispatchIncomingMessage(messageBus);
+                }
+            }
+
+            if (this.incomingPayload != null) {
+                transfer(source, this.incomingPayload);
+                if (!this.incomingPayload.hasRemaining()) {
+                    dispatchIncomingMessage(messageBus);
+                }
+            }
+        }
+    }
+
+    private void dispatchIncomingMessage(IMessageBus messageBus) throws IOException {
+        ByteBuffer payload = this.incomingPayload;
+        this.incomingPayload = null;
+        if (payload == null) {
+            return;
+        }
+        payload.flip();
+
+        RegisteredIncomingMessage registeredMessage = this.incomingMessages.get(this.incomingMessageId);
+        if (registeredMessage == null) {
+            return;
+        }
+
+        AbstractMessage message;
+        try {
+            message = registeredMessage.newInstance();
+            message.read(new ByteBufferInputStream(payload.asReadOnlyBuffer(), this.maxStringLength));
+        } catch (Throwable t) {
+            throw new MalformedFrameException(
+                    "Unable to deserialize message " + registeredMessage.messageClass.getName(),
+                    t
+            );
+        }
+        messageBus.post(message);
+    }
+
+    private static void transfer(ByteBuffer source, ByteBuffer destination) {
+        int bytesToCopy = Math.min(source.remaining(), destination.remaining());
+        int oldLimit = source.limit();
+        source.limit(source.position() + bytesToCopy);
+        destination.put(source);
+        source.limit(oldLimit);
     }
 
     @Override
     public void reset() {
+        this.activeSelector = null;
+        this.lastError = null;
         this.outgoingMessageQueue.clear();
-        this.messageWriteBuffer.clear();
-        this.writeBuffer.clear();
-        this.readBuffer.clear();
+        this.pendingWrite = null;
+        this.headerBuffer.clear();
+        this.incomingPayload = null;
+        this.readChunk = ByteBuffer.allocateDirect(this.readBufferSize);
     }
 
     /**
-     * Writes all queued messages in batches to the given {@code channel}.
-     *
-     * @param channel the channel to write to
-     * @throws IOException if any write operation failed
+     * Retained for source compatibility. The selector now blocks until I/O or an enqueue wakeup, so this value is not
+     * used as a polling delay.
      */
-    private void doWrite(SocketChannel channel) throws IOException {
-        for (Iterator<AbstractMessage> iterator = this.outgoingMessageQueue.iterator(); iterator.hasNext(); iterator.remove()) {
-            AbstractMessage message = iterator.next();
-            ByteBufferOutputStream messageOutStream = new ByteBufferOutputStream(this.messageWriteBuffer);
-            try {
-                message.write(messageOutStream);
-            } catch (Throwable t) {
-                System.err.println("Exception occurred while serializing message: " + message.getClass().getName());
-                t.printStackTrace();
-                continue;
-            }
-
-            //If the buffer increased in size, save the reference
-            if (this.messageWriteBuffer != messageOutStream.getBuffer()) {
-                this.messageWriteBuffer = messageOutStream.getBuffer();
-            }
-
-            int size = this.messageWriteBuffer.position();
-            short messageId = this.outgoingMessages.getOrDefault(message.getClass(), (short) -1);
-            if (messageId == -1)
-                throw new IllegalArgumentException("Message " + message.getClass() + " is not registered");
-
-            //If the current message doesn't fit into our writeBuffer, then flush it
-            if (this.writeBuffer.position() + MESSAGE_HEADER_BYTES + size > this.writeBuffer.capacity()) {
-                this.writeBuffer.flip();
-                while (this.writeBuffer.hasRemaining())
-                    channel.write(this.writeBuffer);
-                this.writeBuffer.clear();
-
-                if (MESSAGE_HEADER_BYTES + size > this.writeBuffer.capacity()) {
-                    this.writeBuffer = ByteBuffer.allocateDirect(MESSAGE_HEADER_BYTES + size);
-                }
-            }
-
-            //Append the packet to the writeBuffer
-            this.writeBuffer.putShort(messageId);
-            this.writeBuffer.putInt(size);
-            this.messageWriteBuffer.flip();
-            this.writeBuffer.put(this.messageWriteBuffer);
-        }
-
-        this.writeBuffer.flip();
-        while (this.writeBuffer.hasRemaining())
-            channel.write(this.writeBuffer);
-        this.writeBuffer.clear();
-    }
-
-    /**
-     * Reads all available messages from the given {@code channel} and {@link IMessageBus#post(AbstractMessage)}s them.
-     *
-     * @param channel    the channel to read from
-     * @param messageBus the {@link IMessageBus} which should handle incoming messages
-     * @return {@code false} if something went wrong during reading, and further reading may not be possible;
-     * {@code true} otherwise
-     */
-    private boolean doRead(SocketChannel channel, IMessageBus messageBus) {
-        try {
-            this.readBuffer.clear();
-            int bytesInBuffer = channel.read(this.readBuffer);
-            if (bytesInBuffer == -1)
-                return false;
-
-            int messageStart = 0;
-            while (true) {
-                //Move remaining bytes to front
-                if (this.readBuffer.capacity() - messageStart < MESSAGE_HEADER_BYTES) {
-                    ByteBufferUtils.moveToFrontAndClear(this.readBuffer, messageStart);
-                    messageStart = 0;
-                    bytesInBuffer = this.readBuffer.position();
-                }
-
-                //2 bytes id, 4 bytes size
-                if (bytesInBuffer - messageStart < MESSAGE_HEADER_BYTES) {
-                    if (!ByteBufferUtils.readAtLeastBlocking(channel, this.readBuffer, 6))
-                        return false;
-                    bytesInBuffer = this.readBuffer.position();
-                }
-
-                this.readBuffer.position(messageStart);
-                short id = this.readBuffer.getShort();
-                int size = this.readBuffer.getInt();
-
-                if (this.readBuffer.capacity() - messageStart < MESSAGE_HEADER_BYTES + size) { //Full message is not contained in current buffer
-                    if (MESSAGE_HEADER_BYTES + size <= this.readBuffer.capacity()) { //If the buffer can hold the message, then move it to the front and read the rest
-                        this.readBuffer.limit(bytesInBuffer);
-                        ByteBufferUtils.moveToFrontAndClear(this.readBuffer, messageStart);
-                    } else { //If the full message can't fit into the buffer, then move it to the front in a new buffer
-                        //Create new buffer which can hold the message
-                        this.readBuffer.position(messageStart);
-                        this.readBuffer.limit(bytesInBuffer);
-                        this.readBuffer = ByteBufferUtils.moveToNewDirectBuffer(this.readBuffer, MESSAGE_HEADER_BYTES + size);
-                    }
-
-                    messageStart = 0;
-                    //Read the full message
-                    if (!ByteBufferUtils.readAtLeastBlocking(channel, this.readBuffer, messageStart + MESSAGE_HEADER_BYTES + size))
-                        return false;
-                    bytesInBuffer = this.readBuffer.position();
-                } else if (bytesInBuffer - messageStart < MESSAGE_HEADER_BYTES + size) { //Full message is not contained in buffer but fits
-                    this.readBuffer.position(bytesInBuffer);
-                    //Read rest of message
-                    if (!ByteBufferUtils.readAtLeastBlocking(channel, this.readBuffer, messageStart + MESSAGE_HEADER_BYTES + size))
-                        return false;
-                    bytesInBuffer = this.readBuffer.position();
-                }
-
-                this.readBuffer.position(messageStart + MESSAGE_HEADER_BYTES);
-
-                //Process the message
-                RegisteredIncomingMessage registeredMessage = this.incomingMessages.get(id);
-                if (registeredMessage != null) {
-                    AbstractMessage message = registeredMessage.newInstance();
-                    try {
-                        message.read(new ByteBufferInputStream(this.readBuffer));
-                        messageBus.post(message);
-                    } catch (Throwable t) {
-                        System.err.println("Exception while reading message " + message.getClass().getName());
-                        t.printStackTrace();
-                    }
-                }
-
-                messageStart += MESSAGE_HEADER_BYTES + size;
-
-                //If we've processed everything that's currently in the buffer, read more or return
-                if (messageStart >= bytesInBuffer) {
-                    this.readBuffer.rewind();
-                    bytesInBuffer = channel.read(this.readBuffer);
-                    messageStart = 0;
-
-                    if (bytesInBuffer == 0)
-                        break;
-                    if (bytesInBuffer == -1)
-                        return false;
-                }
-            }
-
-            return true;
-        } catch (IOException t) {
-            return false;
-        }
-    }
-
+    @Override
     public void setProcessLoopDelay(int processLoopDelay) {
+        if (processLoopDelay < 0) {
+            throw new IllegalArgumentException("processLoopDelay cannot be negative");
+        }
         this.processLoopDelay = processLoopDelay;
     }
 
+    @Override
     public int getProcessLoopDelay() {
-        return processLoopDelay;
+        return this.processLoopDelay;
     }
 
     @Override
     public void setWriteBufferSize(int size) {
-        this.writeBuffer = ByteBuffer.allocateDirect(size);
+        if (size < 1) {
+            throw new IllegalArgumentException("write buffer size must be positive");
+        }
+        this.writeBufferSize = size;
     }
 
     @Override
     public int getWriteBufferSize() {
-        return this.writeBuffer.capacity();
+        return this.writeBufferSize;
     }
 
     @Override
     public void setReadBufferSize(int size) {
-        this.readBuffer = ByteBuffer.allocateDirect(size);
+        if (size < 1) {
+            throw new IllegalArgumentException("read buffer size must be positive");
+        }
+        this.readBufferSize = size;
+        Selector selector = this.activeSelector;
+        if (selector != null) {
+            selector.wakeup();
+        }
     }
 
     @Override
     public int getReadBufferSize() {
-        return this.readBuffer.capacity();
+        return this.readBufferSize;
     }
 
-    /**
-     * Wrapper class around incoming messages.
-     */
+    @Override
+    public void setMaxFrameSize(int size) {
+        if (size < 0 || size > Integer.MAX_VALUE - MESSAGE_HEADER_BYTES) {
+            throw new IllegalArgumentException("Invalid maximum frame size: " + size);
+        }
+        this.maxFrameSize = size;
+    }
+
+    @Override
+    public int getMaxFrameSize() {
+        return this.maxFrameSize;
+    }
+
+    @Override
+    public void setMaxStringLength(int size) {
+        if (size < 0) {
+            throw new IllegalArgumentException("Maximum string length cannot be negative");
+        }
+        this.maxStringLength = size;
+    }
+
+    @Override
+    public int getMaxStringLength() {
+        return this.maxStringLength;
+    }
+
     private static final class RegisteredIncomingMessage {
 
+        @NotNull
+        private final Class<? extends AbstractMessage> messageClass;
         @NotNull
         private final Supplier<? extends AbstractMessage> instanceSupplier;
 
         private RegisteredIncomingMessage(@NotNull Class<? extends AbstractMessage> messageClass) {
+            this.messageClass = messageClass;
             try {
                 MethodHandles.Lookup lookup = MethodHandles.lookup();
                 MethodHandle constructorHandle = lookup.findConstructor(messageClass, MethodType.methodType(void.class));
                 //noinspection unchecked
                 this.instanceSupplier = (Supplier<? extends AbstractMessage>) LambdaMetafactory.metafactory(
                         lookup,
-                        "get", MethodType.methodType(Supplier.class),
-                        constructorHandle.type().generic(), constructorHandle, constructorHandle.type()
+                        "get",
+                        MethodType.methodType(Supplier.class),
+                        constructorHandle.type().generic(),
+                        constructorHandle,
+                        constructorHandle.type()
                 ).getTarget().invokeExact();
             } catch (Throwable e) {
-                throw new IllegalArgumentException("Unable to create lambda factory for constructor. Make sure a default constructor exists", e);
+                throw new IllegalArgumentException(
+                        "Unable to create constructor factory. Make sure a public default constructor exists",
+                        e
+                );
             }
         }
 
@@ -372,15 +468,15 @@ public class DefaultMessageProcessor implements IMessageProcessor {
                 @NotNull Class<? extends AbstractMessage> messageClass,
                 @NotNull Supplier<? extends AbstractMessage> instanceSupplier
         ) {
-            this.instanceSupplier = () -> messageClass.cast(instanceSupplier.get());
+            this.messageClass = messageClass;
+            this.instanceSupplier = () -> messageClass.cast(
+                    Objects.requireNonNull(instanceSupplier.get(), "instanceFactory returned null")
+            );
         }
 
-        /**
-         * @return a new instance of the wrapped message class
-         */
         @NotNull
         @Contract(value = "-> new", pure = true)
-        public AbstractMessage newInstance() {
+        private AbstractMessage newInstance() {
             return this.instanceSupplier.get();
         }
     }
