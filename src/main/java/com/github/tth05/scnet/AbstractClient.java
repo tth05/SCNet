@@ -17,6 +17,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * Base class for a single socket connection.
@@ -45,6 +46,7 @@ public abstract class AbstractClient implements AutoCloseable {
     protected List<IConnectionListener> connectionListeners = new CopyOnWriteArrayList<>();
 
     private final Object lifecycleLock = new Object();
+    private final ThreadLocal<ConnectionContext> processingContext = new ThreadLocal<>();
 
     @Nullable
     private volatile ConnectionContext connectionContext;
@@ -54,16 +56,11 @@ public abstract class AbstractClient implements AutoCloseable {
     private volatile Throwable lastConnectionError;
 
     public AbstractClient() {
-        initChannelAndSelector(null);
+        this(null);
     }
 
     public AbstractClient(@Nullable SocketChannel socketChannel) {
-        try {
-            installConnectedChannel(socketChannel == null ? SocketChannel.open() : socketChannel);
-        } catch (IOException e) {
-            closeQuietly(socketChannel);
-            throw new IllegalStateException("Unable to initialize socket channel", e);
-        }
+        initChannelAndSelector(socketChannel);
     }
 
     /**
@@ -74,16 +71,20 @@ public abstract class AbstractClient implements AutoCloseable {
      */
     @Deprecated
     protected void initChannelAndSelector(@Nullable SocketChannel socketChannel) {
+        SocketChannel channel = socketChannel;
         try {
             if (this.connectionContext != null) {
                 closeAndAwaitEventLoop();
             }
-            installConnectedChannel(socketChannel == null ? SocketChannel.open() : socketChannel);
+            if (channel == null) {
+                channel = SocketChannel.open();
+            }
+            installConnectedChannel(channel);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("Interrupted while replacing the connection channel", e);
         } catch (IOException e) {
-            closeQuietly(socketChannel);
+            closeQuietly(channel);
             throw new IllegalStateException("Unable to initialize socket channel", e);
         }
     }
@@ -153,13 +154,21 @@ public abstract class AbstractClient implements AutoCloseable {
      * Starts the transport event loop. The executor must provide one thread for the lifetime of the connection.
      */
     protected final void startEventLoop(@NotNull Executor executor, @Nullable Runnable afterClose) {
-        ConnectionContext context = this.connectionContext;
-        if (context == null) {
-            throw new IllegalStateException("No connected channel is installed");
+        ConnectionContext context;
+        synchronized (this.lifecycleLock) {
+            context = this.connectionContext;
+            if (context == null || context.closed.get()) {
+                throw new IllegalStateException("No connected channel is installed");
+            }
+            if (context.manualProcessCount != 0) {
+                throw new IllegalStateException("Cannot start an event loop while manual processing is active");
+            }
+            if (!context.eventLoopStarted.compareAndSet(false, true)) {
+                throw new IllegalStateException("The connection event loop is already started");
+            }
+            context.afterClose = afterClose;
         }
 
-        context.eventLoopStarted.set(true);
-        context.afterClose = afterClose;
         try {
             executor.execute(() -> runEventLoop(context));
         } catch (RuntimeException e) {
@@ -171,13 +180,13 @@ public abstract class AbstractClient implements AutoCloseable {
 
     private void runEventLoop(ConnectionContext context) {
         context.eventLoopRunning.set(true);
+        this.processingContext.set(context);
         Throwable failure = null;
         try {
-            if (!isCurrent(context)) {
+            if (!beginConnectedNotification(context)) {
                 return;
             }
 
-            markConnected(context);
             notifyConnected();
             while (isCurrent(context) && context.selector.isOpen() && context.channel.isOpen()) {
                 if (!this.messageProcessor.process(context.selector, context.channel, this.messageBus)) {
@@ -190,6 +199,7 @@ public abstract class AbstractClient implements AutoCloseable {
         } finally {
             finishConnection(context, failure);
             completeConnection(context);
+            this.processingContext.remove();
         }
     }
 
@@ -198,8 +208,30 @@ public abstract class AbstractClient implements AutoCloseable {
      */
     protected boolean process() {
         ConnectionContext context = this.connectionContext;
-        return context != null
-                && this.messageProcessor.process(context.selector, context.channel, this.messageBus);
+        if (context == null) {
+            return false;
+        }
+
+        context.manualProcessLock.lock();
+        try {
+            if (!beginManualProcess(context)) {
+                return false;
+            }
+            ConnectionContext previousContext = this.processingContext.get();
+            this.processingContext.set(context);
+            try {
+                return this.messageProcessor.process(context.selector, context.channel, this.messageBus);
+            } finally {
+                if (previousContext == null) {
+                    this.processingContext.remove();
+                } else {
+                    this.processingContext.set(previousContext);
+                }
+                endManualProcess(context);
+            }
+        } finally {
+            context.manualProcessLock.unlock();
+        }
     }
 
     public boolean isConnected() {
@@ -209,7 +241,7 @@ public abstract class AbstractClient implements AutoCloseable {
                 && context.channel.isConnected()
                 && this.connectionState != ConnectionState.CLOSING;
         if (connected) {
-            markConnected(context);
+            markChannelConnected(context);
         }
         return connected;
     }
@@ -271,19 +303,28 @@ public abstract class AbstractClient implements AutoCloseable {
             this.connectionState = ConnectionState.CLOSING;
         }
         finishConnection(context, null);
-        if (!context.eventLoopRunning.get()) {
+        if (canComplete(context)) {
             completeConnection(context);
         }
     }
 
     /**
-     * Closes the current connection and waits until its event-loop invocation has returned.
+     * Closes the current connection and waits until its transport resources are released and its processor is reset.
+     * This method fails immediately when called by the thread currently processing that connection.
+     *
+     * @throws InterruptedException if the waiting thread is interrupted
+     * @throws IllegalStateException if the current thread is processing the connection being closed
      */
     protected final void closeAndAwaitEventLoop() throws InterruptedException {
         ConnectionContext context = this.connectionContext;
+        if (context != null && this.processingContext.get() == context) {
+            throw new IllegalStateException(
+                    "Cannot replace a connection from its transport callback; schedule the operation on another thread"
+            );
+        }
         close();
-        if (context != null && context.eventLoopStarted.get()) {
-            context.eventLoopStopped.await();
+        if (context != null) {
+            context.transportReleased.await();
         }
     }
 
@@ -294,7 +335,7 @@ public abstract class AbstractClient implements AutoCloseable {
 
         boolean notify;
         synchronized (this.lifecycleLock) {
-            notify = this.connectionContext == context && context.everConnected.get();
+            notify = this.connectionContext == context && context.connectedNotified.get();
             if (notify) {
                 this.connectionState = ConnectionState.DISCONNECTED;
                 if (cause != null) {
@@ -314,7 +355,13 @@ public abstract class AbstractClient implements AutoCloseable {
         if (!context.completed.compareAndSet(false, true)) {
             return;
         }
-        this.messageProcessor.reset();
+        try {
+            this.messageProcessor.reset();
+        } catch (Throwable t) {
+            if (context.failure == null) {
+                context.failure = t;
+            }
+        }
         synchronized (this.lifecycleLock) {
             if (this.connectionContext == context) {
                 this.connectionContext = null;
@@ -329,40 +376,90 @@ public abstract class AbstractClient implements AutoCloseable {
             } catch (Throwable ignored) {
             }
         }
+        context.transportReleased.countDown();
         if (context.notifyListeners && context.failure != null) {
             notifyConnectionError(context.failure);
         }
         if (context.notifyListeners && context.disconnectedNotified.compareAndSet(false, true)) {
             onDisconnected();
         }
-        context.eventLoopStopped.countDown();
     }
 
     private boolean isCurrent(ConnectionContext context) {
         return this.connectionContext == context && !context.closed.get();
     }
 
-    private void markConnected(ConnectionContext context) {
-        context.everConnected.set(true);
+    private boolean beginConnectedNotification(ConnectionContext context) {
         synchronized (this.lifecycleLock) {
-            if (this.connectionContext == context && this.connectionState != ConnectionState.CLOSING) {
+            if (this.connectionContext != context || context.closed.get()) {
+                return false;
+            }
+            context.connectedNotified.set(true);
+            this.connectionState = ConnectionState.CONNECTED;
+            return true;
+        }
+    }
+
+    private void markChannelConnected(ConnectionContext context) {
+        synchronized (this.lifecycleLock) {
+            if (this.connectionContext == context
+                    && !context.closed.get()
+                    && this.connectionState != ConnectionState.CLOSING) {
                 this.connectionState = ConnectionState.CONNECTED;
             }
         }
     }
 
-    public void setMessageProcessor(@NotNull IMessageProcessor messageProcessor) {
-        if (hasActiveConnection()) {
-            throw new IllegalStateException("Cannot replace the message processor while connected");
+    private boolean beginManualProcess(ConnectionContext context) {
+        synchronized (this.lifecycleLock) {
+            if (this.connectionContext != context || context.closed.get()) {
+                return false;
+            }
+            if (context.eventLoopStarted.get()) {
+                throw new IllegalStateException("Cannot process manually after starting the connection event loop");
+            }
+            context.manualProcessCount++;
+            return true;
         }
-        this.messageProcessor = Objects.requireNonNull(messageProcessor, "messageProcessor");
+    }
+
+    private void endManualProcess(ConnectionContext context) {
+        boolean complete;
+        synchronized (this.lifecycleLock) {
+            context.manualProcessCount--;
+            complete = context.closed.get()
+                    && context.manualProcessCount == 0
+                    && !context.eventLoopRunning.get();
+        }
+        if (complete) {
+            completeConnection(context);
+        }
+    }
+
+    private boolean canComplete(ConnectionContext context) {
+        synchronized (this.lifecycleLock) {
+            return context.manualProcessCount == 0 && !context.eventLoopRunning.get();
+        }
+    }
+
+    public void setMessageProcessor(@NotNull IMessageProcessor messageProcessor) {
+        Objects.requireNonNull(messageProcessor, "messageProcessor");
+        synchronized (this.lifecycleLock) {
+            if (hasActiveConnection()) {
+                throw new IllegalStateException("Cannot replace the message processor while connected");
+            }
+            this.messageProcessor = messageProcessor;
+        }
     }
 
     public void setMessageBus(@NotNull IMessageBus messageBus) {
-        if (hasActiveConnection()) {
-            throw new IllegalStateException("Cannot replace the message bus while connected");
+        Objects.requireNonNull(messageBus, "messageBus");
+        synchronized (this.lifecycleLock) {
+            if (hasActiveConnection()) {
+                throw new IllegalStateException("Cannot replace the message bus while connected");
+            }
+            this.messageBus = messageBus;
         }
-        this.messageBus = Objects.requireNonNull(messageBus, "messageBus");
     }
 
     @NotNull
@@ -377,7 +474,12 @@ public abstract class AbstractClient implements AutoCloseable {
 
     private boolean hasActiveConnection() {
         ConnectionContext context = this.connectionContext;
-        return context != null && (context.everConnected.get() || context.eventLoopRunning.get());
+        if (context == null) {
+            return false;
+        }
+        return context.eventLoopStarted.get()
+                || context.eventLoopRunning.get()
+                || context.manualProcessCount != 0;
     }
 
     private static void closeQuietly(@Nullable AutoCloseable closeable) {
@@ -398,8 +500,10 @@ public abstract class AbstractClient implements AutoCloseable {
         private final AtomicBoolean disconnectedNotified = new AtomicBoolean();
         private final AtomicBoolean eventLoopStarted = new AtomicBoolean();
         private final AtomicBoolean eventLoopRunning = new AtomicBoolean();
-        private final AtomicBoolean everConnected = new AtomicBoolean();
-        private final CountDownLatch eventLoopStopped = new CountDownLatch(1);
+        private final AtomicBoolean connectedNotified = new AtomicBoolean();
+        private final CountDownLatch transportReleased = new CountDownLatch(1);
+        private final ReentrantLock manualProcessLock = new ReentrantLock();
+        private int manualProcessCount;
         @Nullable
         private volatile Runnable afterClose;
         @Nullable
@@ -409,7 +513,6 @@ public abstract class AbstractClient implements AutoCloseable {
         private ConnectionContext(Selector selector, SocketChannel channel) {
             this.selector = selector;
             this.channel = channel;
-            this.everConnected.set(channel.isConnected());
         }
     }
 }

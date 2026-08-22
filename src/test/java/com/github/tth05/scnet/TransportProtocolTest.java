@@ -2,6 +2,7 @@ package com.github.tth05.scnet;
 
 import com.github.tth05.scnet.message.AbstractMessage;
 import com.github.tth05.scnet.message.MalformedFrameException;
+import com.github.tth05.scnet.message.impl.DefaultMessageProcessor;
 import com.github.tth05.scnet.util.ByteBufferInputStream;
 import com.github.tth05.scnet.util.ByteBufferOutputStream;
 import org.jetbrains.annotations.NotNull;
@@ -138,6 +139,21 @@ public class TransportProtocolTest extends AbstractSCNetTest {
                         || probe.lastError.get() instanceof MalformedFrameException);
             }
         }
+    }
+
+    @Test
+    public void genericDefaultsPreserveLegacyRangeWhileApplicationsCanSelectSafeCaps() {
+        DefaultMessageProcessor processor = new DefaultMessageProcessor();
+
+        assertEquals(Integer.MAX_VALUE - 6, processor.getMaxFrameSize());
+        assertEquals(Integer.MAX_VALUE - 4, processor.getMaxStringLength());
+        assertEquals(Integer.MAX_VALUE - 4, ByteBufferInputStream.DEFAULT_MAX_STRING_BYTES);
+        assertEquals(Integer.MAX_VALUE - 4, ByteBufferOutputStream.DEFAULT_MAX_STRING_BYTES);
+
+        processor.setMaxFrameSize(DefaultMessageProcessor.RECOMMENDED_MAX_FRAME_SIZE);
+        processor.setMaxStringLength(DefaultMessageProcessor.RECOMMENDED_MAX_STRING_LENGTH);
+        assertEquals(16 * 1024 * 1024, processor.getMaxFrameSize());
+        assertEquals(16 * 1024 * 1024, processor.getMaxStringLength());
     }
 
     private void assertMalformedFrame(ByteBuffer frame, int maxFrameSize, int maxStringLength) throws Exception {

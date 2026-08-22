@@ -11,7 +11,8 @@ import java.nio.charset.StandardCharsets;
  */
 public class ByteBufferInputStream {
 
-    public static final int DEFAULT_MAX_STRING_BYTES = 16 * 1024 * 1024;
+    /** Compatibility default matching the range accepted by the original stream implementation. */
+    public static final int DEFAULT_MAX_STRING_BYTES = Integer.MAX_VALUE - Integer.BYTES;
 
     /**
      * The internal buffer which contains the data to read.

@@ -1,15 +1,30 @@
 package com.github.tth05.scnet;
 
+import com.github.tth05.scnet.message.IMessageBus;
+import com.github.tth05.scnet.message.impl.DefaultMessageProcessor;
+import com.github.tth05.scnet.message.impl.EmptyMessage;
+import org.jetbrains.annotations.NotNull;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 import java.net.InetSocketAddress;
+import java.nio.channels.Selector;
 import java.nio.channels.ServerSocketChannel;
+import java.nio.channels.SocketChannel;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @Timeout(10)
@@ -130,6 +145,169 @@ public class ConnectionTest extends AbstractSCNetTest {
     }
 
     @Test
+    public void rejectsReconnectFromConnectedCallbackWithoutDeadlocking() throws Exception {
+        try (Server server = new Server(); Client client = new Client()) {
+            CountDownLatch callbackFinished = new CountDownLatch(1);
+            AtomicReference<Throwable> reconnectFailure = new AtomicReference<>();
+            server.bind(new InetSocketAddress("127.0.0.1", 0));
+            client.addConnectionListener(new IConnectedListener() {
+                @Override
+                public void onConnected() {
+                    try {
+                        client.connect(server.getLocalAddress());
+                    } catch (Throwable t) {
+                        reconnectFailure.set(t);
+                    } finally {
+                        callbackFinished.countDown();
+                    }
+                }
+            });
+
+            assertTrue(client.connect(server.getLocalAddress()));
+            await(callbackFinished);
+            assertInstanceOf(IllegalStateException.class, reconnectFailure.get());
+            assertTrue(client.isConnected());
+        }
+    }
+
+    @Test
+    public void rejectsReconnectFromMessageCallbackWithoutDeadlocking() throws Exception {
+        withClientAndServer((server, client) -> {
+            CountDownLatch callbackFinished = new CountDownLatch(1);
+            AtomicReference<Throwable> reconnectFailure = new AtomicReference<>();
+            client.getMessageBus().listenAlways(EmptyMessage.class, message -> {
+                try {
+                    client.connect(server.getLocalAddress());
+                } catch (Throwable t) {
+                    reconnectFailure.set(t);
+                } finally {
+                    callbackFinished.countDown();
+                }
+            });
+
+            server.getMessageProcessor().enqueueMessage(new EmptyMessage());
+            await(callbackFinished);
+            assertInstanceOf(IllegalStateException.class, reconnectFailure.get());
+            assertTrue(client.isConnected());
+        });
+    }
+
+    @Test
+    public void reconnectsFromDisconnectedCallbackAfterReleasingTheOldTransport() throws Exception {
+        try (Server server = new Server(); Client client = new Client()) {
+            CountDownLatch firstConnected = new CountDownLatch(1);
+            CountDownLatch secondConnected = new CountDownLatch(1);
+            CountDownLatch serverConnected = new CountDownLatch(1);
+            CountDownLatch serverDisconnected = new CountDownLatch(1);
+            CountDownLatch reconnectFinished = new CountDownLatch(1);
+            AtomicInteger connectionCount = new AtomicInteger();
+            AtomicBoolean reconnectOnce = new AtomicBoolean();
+            AtomicReference<Boolean> reconnectResult = new AtomicReference<>();
+            server.bind(new InetSocketAddress("127.0.0.1", 0));
+            server.addConnectionListener(new IConnectionListener() {
+                @Override
+                public void onConnected() {
+                    serverConnected.countDown();
+                }
+
+                @Override
+                public void onDisconnected() {
+                    serverDisconnected.countDown();
+                }
+            });
+            client.addConnectionListener(new IConnectionListener() {
+                @Override
+                public void onConnected() {
+                    if (connectionCount.incrementAndGet() == 1) {
+                        firstConnected.countDown();
+                    } else {
+                        secondConnected.countDown();
+                    }
+                }
+
+                @Override
+                public void onDisconnected() {
+                    if (reconnectOnce.compareAndSet(false, true)) {
+                        try {
+                            if (serverDisconnected.await(3, TimeUnit.SECONDS)) {
+                                reconnectResult.set(client.connect(server.getLocalAddress()));
+                            } else {
+                                reconnectResult.set(false);
+                            }
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            reconnectResult.set(false);
+                        }
+                        reconnectFinished.countDown();
+                    }
+                }
+            });
+
+            assertTrue(client.connect(server.getLocalAddress()));
+            await(firstConnected);
+            await(serverConnected);
+            server.closeClient();
+
+            await(reconnectFinished);
+            await(secondConnected);
+            assertEquals(Boolean.TRUE, reconnectResult.get());
+            assertTrue(client.isConnected());
+        }
+    }
+
+    @Test
+    public void concurrentReconnectAndDisconnectedCallbackCloseDoNotDeadlock() throws Exception {
+        ExecutorService executor = Executors.newCachedThreadPool();
+        List<SocketChannel> acceptedChannels = new CopyOnWriteArrayList<>();
+        try (ServerSocketChannel rawServer = ServerSocketChannel.open(); Client client = new Client()) {
+            rawServer.bind(new InetSocketAddress("127.0.0.1", 0));
+            CountDownLatch twoAccepted = new CountDownLatch(2);
+            Future<?> acceptFuture = executor.submit(() -> {
+                try {
+                    while (twoAccepted.getCount() != 0) {
+                        acceptedChannels.add(rawServer.accept());
+                        twoAccepted.countDown();
+                    }
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
+            });
+            CountDownLatch firstConnected = new CountDownLatch(1);
+            CountDownLatch callbackCloseFinished = new CountDownLatch(1);
+            AtomicBoolean closeOnce = new AtomicBoolean();
+            client.addConnectionListener(new IConnectionListener() {
+                @Override
+                public void onConnected() {
+                    firstConnected.countDown();
+                }
+
+                @Override
+                public void onDisconnected() {
+                    if (closeOnce.compareAndSet(false, true)) {
+                        client.close();
+                        callbackCloseFinished.countDown();
+                    }
+                }
+            });
+
+            assertTrue(client.connect(rawServer.getLocalAddress()));
+            await(firstConnected);
+            Future<Boolean> reconnect = executor.submit(() -> client.connect(rawServer.getLocalAddress()));
+
+            assertTrue(reconnect.get(3, TimeUnit.SECONDS));
+            await(twoAccepted);
+            await(callbackCloseFinished);
+            acceptFuture.get(3, TimeUnit.SECONDS);
+            assertFalse(client.isConnected());
+        } finally {
+            for (SocketChannel channel : acceptedChannels) {
+                channel.close();
+            }
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
     public void rejectsASecondClientUntilTheFirstDisconnects() throws Exception {
         try (Server server = new Server(); Client first = new Client(); Client second = new Client()) {
             ConnectionProbe serverProbe = new ConnectionProbe(1, 1);
@@ -167,18 +345,127 @@ public class ConnectionTest extends AbstractSCNetTest {
         try (ServerSocketChannel rawServer = ServerSocketChannel.open();
              Client client = new Client(queuedEventLoop::set)) {
             rawServer.bind(new InetSocketAddress("127.0.0.1", 0));
-            ConnectionProbe probe = new ConnectionProbe(0, 1);
+            ConnectionProbe probe = new ConnectionProbe(0, 0);
             client.addConnectionListener(probe);
 
             assertTrue(client.connect(rawServer.getLocalAddress()));
-            try (java.nio.channels.SocketChannel ignored = rawServer.accept()) {
+            try (SocketChannel ignored = rawServer.accept()) {
                 client.close();
-                await(probe.disconnected);
                 assertEquals(ConnectionState.DISCONNECTED, client.getConnectionState());
+                assertEquals(0, probe.connectedCalls.get());
+                assertEquals(0, probe.disconnectedCalls.get());
 
                 queuedEventLoop.get().run();
-                assertEquals(1, probe.disconnectedCalls.get());
+                assertEquals(0, probe.connectedCalls.get());
+                assertEquals(0, probe.disconnectedCalls.get());
             }
+        }
+    }
+
+    @Test
+    public void closeDoesNotResetProcessorWhileManualProcessIsRunning() throws Exception {
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try (ManualClient client = new ManualClient()) {
+            BlockingMessageProcessor processor = new BlockingMessageProcessor();
+            client.setMessageProcessor(processor);
+            Future<Boolean> processResult = executor.submit(client::processOnce);
+            await(processor.entered);
+
+            client.close();
+            assertFalse(processor.resetWhileProcessing.get());
+            assertEquals(0, processor.resetCalls.get());
+
+            processor.release.countDown();
+            assertFalse(processResult.get(3, TimeUnit.SECONDS));
+            await(processor.reset);
+            assertFalse(processor.resetWhileProcessing.get());
+            assertEquals(1, processor.resetCalls.get());
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    public void bothAbstractClientConstructorsUseTheOverridableInitializationContract() throws Exception {
+        ConstructorTrackingClient.initializations.set(0);
+        try (ConstructorTrackingClient ignored = new ConstructorTrackingClient()) {
+            assertEquals(1, ConstructorTrackingClient.initializations.get());
+        }
+
+        ConstructorTrackingClient.initializations.set(0);
+        try (ServerSocketChannel rawServer = ServerSocketChannel.open()) {
+            rawServer.bind(new InetSocketAddress("127.0.0.1", 0));
+            try (ConstructorTrackingClient ignored = new ConstructorTrackingClient(
+                    SocketChannel.open(rawServer.getLocalAddress())
+            ); SocketChannel accepted = rawServer.accept()) {
+                assertEquals(1, ConstructorTrackingClient.initializations.get());
+                assertTrue(accepted.isConnected());
+            }
+        }
+    }
+
+    private static final class ManualClient extends AbstractClient {
+
+        private boolean processOnce() {
+            return process();
+        }
+    }
+
+    private static final class BlockingMessageProcessor extends DefaultMessageProcessor {
+
+        private final CountDownLatch entered = new CountDownLatch(1);
+        private final CountDownLatch release = new CountDownLatch(1);
+        private final CountDownLatch reset = new CountDownLatch(1);
+        private final AtomicBoolean processing = new AtomicBoolean();
+        private final AtomicBoolean resetWhileProcessing = new AtomicBoolean();
+        private final AtomicInteger resetCalls = new AtomicInteger();
+
+        @Override
+        public boolean process(
+                @NotNull Selector selector,
+                @NotNull SocketChannel channel,
+                @NotNull IMessageBus messageBus
+        ) {
+            this.processing.set(true);
+            this.entered.countDown();
+            try {
+                assertTrue(this.release.await(3, TimeUnit.SECONDS));
+                return false;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            } finally {
+                this.processing.set(false);
+            }
+        }
+
+        @Override
+        public void reset() {
+            if (this.processing.get()) {
+                this.resetWhileProcessing.set(true);
+            }
+            this.resetCalls.incrementAndGet();
+            super.reset();
+            this.reset.countDown();
+        }
+    }
+
+    @SuppressWarnings("deprecation")
+    private static final class ConstructorTrackingClient extends AbstractClient {
+
+        private static final AtomicInteger initializations = new AtomicInteger();
+
+        private ConstructorTrackingClient() {
+        }
+
+        private ConstructorTrackingClient(SocketChannel channel) {
+            super(channel);
+        }
+
+        @Override
+        protected void initChannelAndSelector(SocketChannel socketChannel) {
+            initializations.incrementAndGet();
+            super.initChannelAndSelector(socketChannel);
         }
     }
 }

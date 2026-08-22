@@ -64,6 +64,8 @@ public class Client extends AbstractClient {
 
     /**
      * Tries to connect this client to the given address.
+     *
+     * @throws IllegalStateException if called from a callback currently executing on this client's transport thread
      */
     public synchronized boolean connect(@NotNull SocketAddress address) {
         Objects.requireNonNull(address, "address");

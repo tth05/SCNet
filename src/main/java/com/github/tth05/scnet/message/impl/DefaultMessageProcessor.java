@@ -37,10 +37,25 @@ import java.util.function.Supplier;
  */
 public class DefaultMessageProcessor implements IMessageProcessor {
 
-    public static final int DEFAULT_MAX_FRAME_SIZE = 16 * 1024 * 1024;
-    public static final int DEFAULT_MAX_STRING_LENGTH = 16 * 1024 * 1024;
-
     private static final int MESSAGE_HEADER_BYTES = Short.BYTES + Integer.BYTES;
+
+    /**
+     * Compatibility default matching the payload range accepted by the original protocol implementation.
+     * Applications accepting untrusted peers should configure a smaller limit explicitly.
+     */
+    public static final int DEFAULT_MAX_FRAME_SIZE = Integer.MAX_VALUE - MESSAGE_HEADER_BYTES;
+
+    /**
+     * Compatibility default matching the string range accepted by the original stream implementation.
+     * Applications accepting untrusted peers should configure a smaller limit explicitly.
+     */
+    public static final int DEFAULT_MAX_STRING_LENGTH = Integer.MAX_VALUE - Integer.BYTES;
+
+    /** A conservative application-level frame limit for trusted local protocols. */
+    public static final int RECOMMENDED_MAX_FRAME_SIZE = 16 * 1024 * 1024;
+
+    /** A conservative application-level string limit for trusted local protocols. */
+    public static final int RECOMMENDED_MAX_STRING_LENGTH = 16 * 1024 * 1024;
 
     @NotNull
     private final Map<Short, RegisteredIncomingMessage> incomingMessages = new ConcurrentHashMap<>();
