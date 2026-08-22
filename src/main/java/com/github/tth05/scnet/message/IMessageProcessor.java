@@ -5,6 +5,7 @@ import org.jetbrains.annotations.NotNull;
 
 import java.nio.channels.Selector;
 import java.nio.channels.SocketChannel;
+import java.util.function.Supplier;
 
 /**
  * A message processor will send enqueued messages and forward received messages to a {@link IMessageBus}.
@@ -26,6 +27,22 @@ public interface IMessageProcessor {
      *                                  registered with the given id.
      */
     <T extends AbstractMessage> void registerMessage(short id, @NotNull Class<T> messageClass);
+
+    /**
+     * Registers a message using a caller-provided factory for incoming instances. This variant does not require SCNet
+     * to access the message constructor and therefore also works when the message class belongs to another Java module.
+     *
+     * @param id              the id for the message, has to be unique amongst all other messages
+     * @param messageClass    the class of the message
+     * @param instanceFactory factory used to create a fresh instance whenever this message is received
+     * @throws IllegalArgumentException if the given {@code id} is smaller than 1 or there already is a message
+     *                                  registered with the given id
+     */
+    <T extends AbstractMessage> void registerMessage(
+            short id,
+            @NotNull Class<T> messageClass,
+            @NotNull Supplier<? extends T> instanceFactory
+    );
 
     /**
      * Enqueues a message to be sent at some point in the future. If a non-registered message is enqueued,

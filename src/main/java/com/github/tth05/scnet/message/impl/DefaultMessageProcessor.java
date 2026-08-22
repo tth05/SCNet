@@ -6,6 +6,7 @@ import com.github.tth05.scnet.util.ByteBufferOutputStream;
 import com.github.tth05.scnet.util.ByteBufferUtils;
 import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.IOException;
 import java.lang.invoke.LambdaMetafactory;
@@ -19,6 +20,7 @@ import java.nio.channels.SocketChannel;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.function.Supplier;
@@ -80,21 +82,48 @@ public class DefaultMessageProcessor implements IMessageProcessor {
 
     @Override
     public <T extends AbstractMessage> void registerMessage(short id, @NotNull Class<T> messageClass) {
+        registerMessageInternal(id, messageClass, null);
+    }
+
+    @Override
+    public <T extends AbstractMessage> void registerMessage(
+            short id,
+            @NotNull Class<T> messageClass,
+            @NotNull Supplier<? extends T> instanceFactory
+    ) {
+        registerMessageInternal(id, messageClass, Objects.requireNonNull(instanceFactory, "instanceFactory"));
+    }
+
+    private <T extends AbstractMessage> void registerMessageInternal(
+            short id,
+            @NotNull Class<T> messageClass,
+            @Nullable Supplier<? extends T> instanceFactory
+    ) {
+        Objects.requireNonNull(messageClass, "messageClass");
         if (id < 1)
             throw new IllegalArgumentException("id has to be greater than zero");
         if (this.incomingMessages.containsKey(id) || this.outgoingMessages.containsKey(id))
             throw new IllegalArgumentException("message with id " + id + " is already registered");
 
         if (AbstractMessageIncoming.class.isAssignableFrom(messageClass)) {
-            this.incomingMessages.put(id, new RegisteredIncomingMessage(messageClass));
+            this.incomingMessages.put(id, newIncomingMessage(messageClass, instanceFactory));
         } else if (AbstractMessageOutgoing.class.isAssignableFrom(messageClass)) {
             this.outgoingMessages.put(messageClass, id);
         } else if (AbstractMessage.class.isAssignableFrom(messageClass)) {
-            this.incomingMessages.put(id, new RegisteredIncomingMessage(messageClass));
+            this.incomingMessages.put(id, newIncomingMessage(messageClass, instanceFactory));
             this.outgoingMessages.put(messageClass, id);
         } else {
             throw new IllegalArgumentException("messageClass does not implement AbstractMessage");
         }
+    }
+
+    private static RegisteredIncomingMessage newIncomingMessage(
+            @NotNull Class<? extends AbstractMessage> messageClass,
+            @Nullable Supplier<? extends AbstractMessage> instanceFactory
+    ) {
+        return instanceFactory == null
+                ? new RegisteredIncomingMessage(messageClass)
+                : new RegisteredIncomingMessage(messageClass, instanceFactory);
     }
 
     @Override
@@ -337,6 +366,13 @@ public class DefaultMessageProcessor implements IMessageProcessor {
             } catch (Throwable e) {
                 throw new IllegalArgumentException("Unable to create lambda factory for constructor. Make sure a default constructor exists", e);
             }
+        }
+
+        private RegisteredIncomingMessage(
+                @NotNull Class<? extends AbstractMessage> messageClass,
+                @NotNull Supplier<? extends AbstractMessage> instanceSupplier
+        ) {
+            this.instanceSupplier = () -> messageClass.cast(instanceSupplier.get());
         }
 
         /**

@@ -43,6 +43,27 @@ public class SendMessageTest extends AbstractSCNetTest {
     }
 
     @Test
+    public void testSendMessageWithCallerProvidedFactory() {
+        int number = ThreadLocalRandom.current().nextInt(Integer.MAX_VALUE);
+        withClientAndServer((s, c) -> {
+            c.getMessageProcessor().registerMessage((short) 1, FactoryMessage.class, () -> new FactoryMessage(0));
+            s.getMessageProcessor().registerMessage((short) 1, FactoryMessage.class, () -> new FactoryMessage(0));
+
+            AtomicInteger messagePayload = new AtomicInteger(-1);
+            CountDownLatch latch = new CountDownLatch(1);
+            s.getMessageBus().listenAlways(FactoryMessage.class, message -> {
+                messagePayload.set(message.value);
+                latch.countDown();
+            });
+
+            c.getMessageProcessor().enqueueMessage(new FactoryMessage(number));
+
+            assertDoesNotThrow((Executable) latch::await);
+            assertEquals(number, messagePayload.get());
+        });
+    }
+
+    @Test
     public void testSendMixedBatchMessages() {
         int number = ThreadLocalRandom.current().nextInt(Integer.MAX_VALUE);
         withClientAndServer((s, c) -> {
@@ -157,6 +178,25 @@ public class SendMessageTest extends AbstractSCNetTest {
                 messageStream.writeInt(69);
             }
             messageStream.writeInt(i);
+        }
+    }
+
+    public static final class FactoryMessage extends AbstractMessage {
+
+        private int value;
+
+        private FactoryMessage(int value) {
+            this.value = value;
+        }
+
+        @Override
+        public void read(@NotNull ByteBufferInputStream messageStream) {
+            this.value = messageStream.readInt();
+        }
+
+        @Override
+        public void write(@NotNull ByteBufferOutputStream messageStream) {
+            messageStream.writeInt(this.value);
         }
     }
 
