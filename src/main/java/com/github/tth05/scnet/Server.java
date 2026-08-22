@@ -17,6 +17,8 @@ import java.nio.channels.SocketChannel;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executor;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -157,6 +159,22 @@ public class Server implements AutoCloseable {
         if (currentClient != null) {
             currentClient.close();
         }
+    }
+
+    /**
+     * Drains the current client's accepted outbound frames and closes that client after the final byte is written.
+     *
+     * @return a stage completed after the client connection closes, or completed exceptionally when no client is
+     * connected or the pending data cannot be written
+     */
+    public CompletionStage<Void> closeClientAfterPendingWrites() {
+        ServerClient currentClient = this.client;
+        if (currentClient == null || !currentClient.isConnected()) {
+            CompletableFuture<Void> unavailable = new CompletableFuture<>();
+            unavailable.completeExceptionally(new IllegalStateException("No client is connected"));
+            return unavailable;
+        }
+        return currentClient.closeAfterPendingWrites();
     }
 
     @NotNull

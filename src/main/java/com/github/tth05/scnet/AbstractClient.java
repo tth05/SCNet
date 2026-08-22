@@ -13,6 +13,9 @@ import java.nio.channels.Selector;
 import java.nio.channels.SocketChannel;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
@@ -291,6 +294,61 @@ public abstract class AbstractClient implements AutoCloseable {
         }
     }
 
+    /**
+     * Stops accepting outgoing messages, drains every frame already accepted by the message processor, and then
+     * closes this connection. Later enqueue attempts are rejected by the processor. Repeated calls while the same
+     * connection is draining return the same stage.
+     *
+     * @return a stage completed after transport teardown and disconnect notification, or completed exceptionally if
+     * serialization, I/O, peer closure, or a competing immediate close prevents the drain
+     */
+    public CompletionStage<Void> closeAfterPendingWrites() {
+        ConnectionContext context;
+        CompletableFuture<Void> closeFuture;
+        CompletionStage<Void> drainStage;
+        synchronized (this.lifecycleLock) {
+            context = this.connectionContext;
+            if (context == null || context.closed.get() || !context.channel.isConnected()) {
+                return failedStage(new IllegalStateException("No connected channel is available to drain"));
+            }
+            if (context.drainCloseFuture != null) {
+                return context.drainCloseFuture;
+            }
+
+            closeFuture = new CompletableFuture<>();
+            context.drainCloseFuture = closeFuture;
+            try {
+                drainStage = Objects.requireNonNull(
+                        this.messageProcessor.beginOutboundDrain(),
+                        "messageProcessor returned a null outbound drain stage"
+                );
+            } catch (Throwable t) {
+                context.drainFailure = t;
+                finishConnection(context, t);
+                if (canComplete(context)) {
+                    completeConnection(context);
+                }
+                return closeFuture;
+            }
+        }
+
+        drainStage.whenComplete((ignored, error) -> {
+            if (error == null) {
+                context.outboundDrainCompleted = true;
+                finishConnection(context, null);
+            } else {
+                Throwable cause = unwrapCompletionFailure(error);
+                context.drainFailure = cause;
+                finishConnection(context, cause);
+            }
+            if (canComplete(context)) {
+                completeConnection(context);
+            }
+        });
+        context.selector.wakeup();
+        return closeFuture;
+    }
+
     @Override
     public void close() {
         ConnectionContext context;
@@ -383,6 +441,7 @@ public abstract class AbstractClient implements AutoCloseable {
         if (context.notifyListeners && context.disconnectedNotified.compareAndSet(false, true)) {
             onDisconnected();
         }
+        completeDrainClose(context);
     }
 
     private boolean isCurrent(ConnectionContext context) {
@@ -440,6 +499,36 @@ public abstract class AbstractClient implements AutoCloseable {
         synchronized (this.lifecycleLock) {
             return context.manualProcessCount == 0 && !context.eventLoopRunning.get();
         }
+    }
+
+    private void completeDrainClose(ConnectionContext context) {
+        CompletableFuture<Void> closeFuture = context.drainCloseFuture;
+        if (closeFuture == null) {
+            return;
+        }
+        if (context.outboundDrainCompleted) {
+            closeFuture.complete(null);
+            return;
+        }
+
+        Throwable cause = context.drainFailure != null ? context.drainFailure : context.failure;
+        if (cause == null) {
+            cause = new IOException("Connection closed before pending outbound messages were drained");
+        }
+        closeFuture.completeExceptionally(cause);
+    }
+
+    private static Throwable unwrapCompletionFailure(Throwable failure) {
+        if (failure instanceof CompletionException && failure.getCause() != null) {
+            return failure.getCause();
+        }
+        return failure;
+    }
+
+    private static <T> CompletionStage<T> failedStage(Throwable failure) {
+        CompletableFuture<T> future = new CompletableFuture<>();
+        future.completeExceptionally(failure);
+        return future;
     }
 
     public void setMessageProcessor(@NotNull IMessageProcessor messageProcessor) {
@@ -509,6 +598,11 @@ public abstract class AbstractClient implements AutoCloseable {
         @Nullable
         private volatile Throwable failure;
         private volatile boolean notifyListeners;
+        @Nullable
+        private volatile CompletableFuture<Void> drainCloseFuture;
+        @Nullable
+        private volatile Throwable drainFailure;
+        private volatile boolean outboundDrainCompleted;
 
         private ConnectionContext(Selector selector, SocketChannel channel) {
             this.selector = selector;

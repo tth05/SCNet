@@ -12,6 +12,7 @@ import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.io.EOFException;
 import java.io.IOException;
 import java.lang.invoke.LambdaMetafactory;
 import java.lang.invoke.MethodHandle;
@@ -28,8 +29,11 @@ import java.util.Iterator;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Queue;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.function.Supplier;
 
 /**
@@ -65,6 +69,11 @@ public class DefaultMessageProcessor implements IMessageProcessor {
     private final Map<Short, Class<? extends AbstractMessage>> registeredMessageIds = new HashMap<>();
     @NotNull
     private final Queue<AbstractMessage> outgoingMessageQueue = new ConcurrentLinkedQueue<>();
+    private final Object outboundStateLock = new Object();
+
+    private boolean acceptingOutboundMessages = true;
+    @Nullable
+    private CompletableFuture<Void> outboundDrain;
 
     @NotNull
     private final ByteBuffer headerBuffer = ByteBuffer.allocate(MESSAGE_HEADER_BYTES);
@@ -154,7 +163,31 @@ public class DefaultMessageProcessor implements IMessageProcessor {
 
     @Override
     public void enqueueMessage(@NotNull AbstractMessage message) {
-        this.outgoingMessageQueue.offer(Objects.requireNonNull(message, "message"));
+        Objects.requireNonNull(message, "message");
+        synchronized (this.outboundStateLock) {
+            if (!this.acceptingOutboundMessages) {
+                throw new RejectedExecutionException("The connection is draining pending outbound messages");
+            }
+            this.outgoingMessageQueue.offer(message);
+        }
+        wakeActiveSelector();
+    }
+
+    @Override
+    public CompletionStage<Void> beginOutboundDrain() {
+        CompletableFuture<Void> drain;
+        synchronized (this.outboundStateLock) {
+            if (this.outboundDrain == null) {
+                this.acceptingOutboundMessages = false;
+                this.outboundDrain = new CompletableFuture<>();
+            }
+            drain = this.outboundDrain;
+        }
+        wakeActiveSelector();
+        return drain;
+    }
+
+    private void wakeActiveSelector() {
         Selector selector = this.activeSelector;
         if (selector != null) {
             selector.wakeup();
@@ -170,6 +203,9 @@ public class DefaultMessageProcessor implements IMessageProcessor {
         this.lastError = null;
 
         try {
+            if (completeOutboundDrainIfReady()) {
+                return false;
+            }
             updateWriteInterest(selector, channel);
             selector.select();
 
@@ -180,6 +216,7 @@ public class DefaultMessageProcessor implements IMessageProcessor {
                     continue;
                 }
                 if (key.isReadable() && !readAvailable(channel, messageBus)) {
+                    failOutboundDrain(new EOFException("Peer closed before pending outbound messages were drained"));
                     return false;
                 }
                 if (key.isValid() && key.isWritable()) {
@@ -187,14 +224,19 @@ public class DefaultMessageProcessor implements IMessageProcessor {
                 }
             }
 
+            if (completeOutboundDrainIfReady()) {
+                return false;
+            }
             updateWriteInterest(selector, channel);
             return true;
         } catch (ClosedSelectorException | ClosedChannelException e) {
+            failOutboundDrain(e);
             return false;
         } catch (Throwable t) {
             if (channel.isOpen() && selector.isOpen()) {
                 this.lastError = t;
             }
+            failOutboundDrain(t);
             return false;
         }
     }
@@ -238,6 +280,28 @@ public class DefaultMessageProcessor implements IMessageProcessor {
                 return;
             }
             this.pendingWrite = null;
+        }
+    }
+
+    private boolean completeOutboundDrainIfReady() {
+        CompletableFuture<Void> drain;
+        synchronized (this.outboundStateLock) {
+            drain = this.outboundDrain;
+            if (drain == null || this.pendingWrite != null || !this.outgoingMessageQueue.isEmpty()) {
+                return false;
+            }
+        }
+        drain.complete(null);
+        return true;
+    }
+
+    private void failOutboundDrain(Throwable cause) {
+        CompletableFuture<Void> drain;
+        synchronized (this.outboundStateLock) {
+            drain = this.outboundDrain;
+        }
+        if (drain != null) {
+            drain.completeExceptionally(cause);
         }
     }
 
@@ -368,13 +432,22 @@ public class DefaultMessageProcessor implements IMessageProcessor {
 
     @Override
     public void reset() {
+        CompletableFuture<Void> unfinishedDrain;
+        synchronized (this.outboundStateLock) {
+            unfinishedDrain = this.outboundDrain;
+            this.outboundDrain = null;
+            this.acceptingOutboundMessages = true;
+            this.outgoingMessageQueue.clear();
+        }
         this.activeSelector = null;
         this.lastError = null;
-        this.outgoingMessageQueue.clear();
         this.pendingWrite = null;
         this.headerBuffer.clear();
         this.incomingPayload = null;
         this.readChunk = ByteBuffer.allocateDirect(this.readBufferSize);
+        if (unfinishedDrain != null && !unfinishedDrain.isDone()) {
+            unfinishedDrain.completeExceptionally(new ClosedChannelException());
+        }
     }
 
     /**

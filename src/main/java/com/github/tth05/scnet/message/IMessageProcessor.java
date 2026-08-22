@@ -6,6 +6,8 @@ import org.jetbrains.annotations.Nullable;
 
 import java.nio.channels.Selector;
 import java.nio.channels.SocketChannel;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.function.Supplier;
 
 /**
@@ -53,6 +55,20 @@ public interface IMessageProcessor {
      * @param message the message to enqueue
      */
     void enqueueMessage(@NotNull AbstractMessage message);
+
+    /**
+     * Atomically stops accepting outgoing messages and drains every frame accepted before this call. Implementations
+     * must reject later {@link #enqueueMessage(AbstractMessage)} calls and retain partially written frame state until
+     * the channel accepts every byte. The processor remains in drain mode until {@link #reset()}.
+     *
+     * @return a stage completed when all accepted outbound bytes have been written to the channel, or completed
+     * exceptionally if serialization or I/O prevents the drain
+     */
+    default CompletionStage<Void> beginOutboundDrain() {
+        CompletableFuture<Void> unsupported = new CompletableFuture<>();
+        unsupported.completeExceptionally(new UnsupportedOperationException("Outbound draining is not supported"));
+        return unsupported;
+    }
 
     /**
      * Waits for I/O readiness, writes queued message data, and forwards complete incoming messages to the message bus.
