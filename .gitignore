@@ -3,3 +3,5 @@
 build
 out
 .idea
+.codex/
+.codex-remote-attachments/

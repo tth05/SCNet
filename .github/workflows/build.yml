@@ -10,7 +10,12 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     steps:
       - name: Check out sources
         uses: actions/checkout@v6
@@ -25,6 +30,7 @@ jobs:
         uses: gradle/actions/setup-gradle@v6
 
       - name: Build and verify publication metadata
+        shell: bash
         run: >-
           ./gradlew clean build
           generatePomFileForMavenJavaPublication
