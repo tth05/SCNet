@@ -29,11 +29,14 @@ class ServerClient extends AbstractClient {
         setMessageProcessor(messageProcessor);
         setMessageBus(messageBus);
         this.connectionListeners = connectionListeners;
-        installConnectedChannel(socketChannel);
-        startEventLoop(createDefaultExecutor(), () -> afterClose.accept(this));
+        installConnectedChannel(socketChannel, () -> afterClose.accept(this));
     }
 
-    private static Executor createDefaultExecutor() {
+    void start(Executor executor) {
+        startEventLoopIfConnected(executor);
+    }
+
+    static Executor createDefaultExecutor() {
         ThreadPoolExecutor executor = new ThreadPoolExecutor(
                 0,
                 1,

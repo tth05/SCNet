@@ -97,13 +97,20 @@ public abstract class AbstractClient implements AutoCloseable {
      * {@link #startEventLoop(Executor, Runnable)}.
      */
     protected final void installConnectedChannel(@NotNull SocketChannel channel) throws IOException {
+        installConnectedChannel(channel, null);
+    }
+
+    /** Installs a close callback before the endpoint can be published or closed, even if its loop never starts. */
+    protected final void installConnectedChannel(@NotNull SocketChannel channel, @Nullable Runnable afterClose) throws IOException {
         Objects.requireNonNull(channel, "channel");
         Selector newSelector = Selector.open();
         boolean success = false;
         try {
             channel.configureBlocking(false);
             channel.register(newSelector, SelectionKey.OP_READ);
-            installContext(new ConnectionContext(newSelector, channel));
+            ConnectionContext context = new ConnectionContext(newSelector, channel);
+            context.afterClose = afterClose;
+            installContext(context);
             success = true;
         } finally {
             if (!success) {
@@ -157,10 +164,22 @@ public abstract class AbstractClient implements AutoCloseable {
      * Starts the transport event loop. The executor must provide one thread for the lifetime of the connection.
      */
     protected final void startEventLoop(@NotNull Executor executor, @Nullable Runnable afterClose) {
+        startEventLoop(executor, afterClose, false);
+    }
+
+    /** Starts a published endpoint unless a concurrent close already released it. */
+    protected final void startEventLoopIfConnected(@NotNull Executor executor) {
+        startEventLoop(executor, null, true);
+    }
+
+    private void startEventLoop(Executor executor, Runnable afterClose, boolean allowClosed) {
         ConnectionContext context;
         synchronized (this.lifecycleLock) {
             context = this.connectionContext;
             if (context == null || context.closed.get()) {
+                if (allowClosed) {
+                    return;
+                }
                 throw new IllegalStateException("No connected channel is installed");
             }
             if (context.manualProcessCount != 0) {
@@ -169,7 +188,9 @@ public abstract class AbstractClient implements AutoCloseable {
             if (!context.eventLoopStarted.compareAndSet(false, true)) {
                 throw new IllegalStateException("The connection event loop is already started");
             }
-            context.afterClose = afterClose;
+            if (afterClose != null) {
+                context.afterClose = afterClose;
+            }
         }
 
         try {

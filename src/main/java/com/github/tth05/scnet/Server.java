@@ -25,11 +25,15 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Supplier;
 
 public class Server implements AutoCloseable {
 
     @NotNull
     private final Executor executor;
+    private final Supplier<Executor> clientExecutorFactory;
+    private final Object lifecycleLock = new Object();
+    private boolean preparingClient;
     @NotNull
     private volatile IMessageBus messageBus = new DefaultMessageBus();
     @NotNull
@@ -56,7 +60,12 @@ public class Server implements AutoCloseable {
      * @param executor an executor which can dedicate one thread to accepting connections while the server is open
      */
     public Server(@NotNull Executor executor) {
+        this(executor, ServerClient::createDefaultExecutor);
+    }
+
+    Server(@NotNull Executor executor, @NotNull Supplier<Executor> clientExecutorFactory) {
         this.executor = Objects.requireNonNull(executor, "executor");
+        this.clientExecutorFactory = Objects.requireNonNull(clientExecutorFactory, "clientExecutorFactory");
         try {
             this.selector = Selector.open();
             this.serverSocketChannel = ServerSocketChannel.open();
@@ -114,38 +123,65 @@ public class Server implements AutoCloseable {
     private void acceptAvailableClients() throws IOException {
         SocketChannel accepted;
         while ((accepted = this.serverSocketChannel.accept()) != null) {
-            ServerClient currentClient = this.client;
-            if (currentClient != null && currentClient.isConnected()) {
-                accepted.close();
-                continue;
+            IMessageProcessor processor;
+            IMessageBus bus;
+            synchronized (this.lifecycleLock) {
+                if (this.closed.get() || this.client != null) {
+                    accepted.close();
+                    continue;
+                }
+                this.preparingClient = true;
+                processor = this.messageProcessor;
+                bus = this.messageBus;
             }
 
-            if (currentClient != null) {
-                accepted.close();
-                continue;
-            }
-
-            this.messageProcessor.reset();
+            ServerClient candidate = null;
             try {
-                this.client = new ServerClient(
+                processor.reset();
+                candidate = new ServerClient(
                         accepted,
                         this.connectionListeners,
-                        this.messageProcessor,
-                        this.messageBus,
+                        processor,
+                        bus,
                         this::onClientClosed
                 );
+                boolean publish;
+                synchronized (this.lifecycleLock) {
+                    this.preparingClient = false;
+                    publish = !this.closed.get();
+                    if (publish) {
+                        this.client = candidate;
+                    }
+                }
+                if (publish) {
+                    // The endpoint and its close callback are installed before any executor or listener can run.
+                    candidate.start(this.clientExecutorFactory.get());
+                } else {
+                    candidate.close();
+                }
             } catch (IOException | RuntimeException e) {
-                accepted.close();
-                this.lastConnectionError = e;
-                notifyConnectionError(e);
+                if (candidate != null) {
+                    candidate.close();
+                } else {
+                    closeQuietly(accepted);
+                }
+                synchronized (this.lifecycleLock) {
+                    this.preparingClient = false;
+                    this.lastConnectionError = e;
+                }
+                if (!this.closed.get()) {
+                    notifyConnectionError(e);
+                }
             }
         }
     }
 
     private void onClientClosed(ServerClient closedClient) {
-        if (this.client == closedClient) {
-            this.lastConnectionError = closedClient.getLastConnectionError();
-            this.client = null;
+        synchronized (this.lifecycleLock) {
+            if (this.client == closedClient) {
+                this.lastConnectionError = closedClient.getLastConnectionError();
+                this.client = null;
+            }
         }
     }
 
@@ -197,12 +233,15 @@ public class Server implements AutoCloseable {
 
     @Override
     public void close() {
-        if (!this.closed.compareAndSet(false, true)) {
-            return;
+        ServerClient currentClient;
+        synchronized (this.lifecycleLock) {
+            if (!this.closed.compareAndSet(false, true)) {
+                return;
+            }
+            currentClient = this.client;
         }
 
         this.selector.wakeup();
-        ServerClient currentClient = this.client;
         if (currentClient != null) {
             currentClient.close();
         }
@@ -228,17 +267,21 @@ public class Server implements AutoCloseable {
     }
 
     public void setMessageProcessor(@NotNull IMessageProcessor messageProcessor) {
-        if (this.client != null) {
-            throw new IllegalStateException("Cannot replace the message processor while a client is connected");
+        synchronized (this.lifecycleLock) {
+            if (this.preparingClient || this.client != null) {
+                throw new IllegalStateException("Cannot replace the message processor while a client is being accepted or connected");
+            }
+            this.messageProcessor = Objects.requireNonNull(messageProcessor, "messageProcessor");
         }
-        this.messageProcessor = Objects.requireNonNull(messageProcessor, "messageProcessor");
     }
 
     public void setMessageBus(@NotNull IMessageBus messageBus) {
-        if (this.client != null) {
-            throw new IllegalStateException("Cannot replace the message bus while a client is connected");
+        synchronized (this.lifecycleLock) {
+            if (this.preparingClient || this.client != null) {
+                throw new IllegalStateException("Cannot replace the message bus while a client is being accepted or connected");
+            }
+            this.messageBus = Objects.requireNonNull(messageBus, "messageBus");
         }
-        this.messageBus = Objects.requireNonNull(messageBus, "messageBus");
     }
 
     @NotNull
