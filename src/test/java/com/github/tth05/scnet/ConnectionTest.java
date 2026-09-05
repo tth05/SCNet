@@ -298,6 +298,9 @@ public class ConnectionTest extends AbstractSCNetTest {
             await(twoAccepted);
             await(callbackCloseFinished);
             acceptFuture.get(3, TimeUnit.SECONDS);
+            // Callback close can precede or follow replacement now that reconnect does not hold its monitor.
+            // Once reconnect has returned, an explicit close must close whichever connection is current.
+            client.close();
             assertFalse(client.isConnected());
         } finally {
             for (SocketChannel channel : acceptedChannels) {

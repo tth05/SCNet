@@ -374,15 +374,21 @@ public abstract class AbstractClient implements AutoCloseable {
      * @throws IllegalStateException if the current thread is processing the connection being closed
      */
     protected final void closeAndAwaitEventLoop() throws InterruptedException {
+        requireConnectionReplacementAllowed();
+        ConnectionContext context = this.connectionContext;
+        close();
+        if (context != null) {
+            context.transportReleased.await();
+        }
+    }
+
+    /** Checks callback reentrancy before a connecting client acquires its connection-attempt lock. */
+    protected final void requireConnectionReplacementAllowed() {
         ConnectionContext context = this.connectionContext;
         if (context != null && this.processingContext.get() == context) {
             throw new IllegalStateException(
                     "Cannot replace a connection from its transport callback; schedule the operation on another thread"
             );
-        }
-        close();
-        if (context != null) {
-            context.transportReleased.await();
         }
     }
 

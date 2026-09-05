@@ -21,6 +21,7 @@ public class Client extends AbstractClient {
 
     @NotNull
     private final Executor executor;
+    private final Object connectionAttemptLock = new Object();
 
     public Client() {
         this(createDefaultExecutor());
@@ -67,15 +68,24 @@ public class Client extends AbstractClient {
      *
      * @throws IllegalStateException if called from a callback currently executing on this client's transport thread
      */
-    public synchronized boolean connect(@NotNull SocketAddress address) {
+    public boolean connect(@NotNull SocketAddress address) {
         Objects.requireNonNull(address, "address");
-        try {
-            closeAndAwaitEventLoop();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return false;
+        requireConnectionReplacementAllowed();
+        synchronized (this.connectionAttemptLock) {
+            try {
+                // Callbacks may close the old connection while this attempt waits for them to finish.
+                closeAndAwaitEventLoop();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+            synchronized (this) {
+                return connectAfterTransportReleased(address);
+            }
         }
+    }
 
+    private boolean connectAfterTransportReleased(SocketAddress address) {
         setConnecting();
         Selector newSelector = null;
         SocketChannel newChannel = null;
