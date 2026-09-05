@@ -39,6 +39,15 @@ publishing {
     publications {
         mavenJava(MavenPublication) {
             from components.java
+            pom {
+                name = 'SCNet'
+                description = 'Typed, bounded, nonblocking Java client/server message transport.'
+                url = 'https://github.com/tth05/SCNet'
+                scm {
+                    url = 'https://github.com/tth05/SCNet'
+                    connection = 'scm:git:https://github.com/tth05/SCNet.git'
+                }
+            }
         }
     }
     repositories {
