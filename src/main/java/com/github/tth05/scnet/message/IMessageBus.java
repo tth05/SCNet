@@ -32,8 +32,8 @@ public interface IMessageBus {
     <T extends AbstractMessage> void listenAlways(@NotNull Class<T> messageClass, @Nullable Object associatedObject, @NotNull Consumer<T> listener);
 
     /**
-     * Behaves like {@link #listenAlways(Class, Consumer)}, but the {@code listener} will unregistered after receiving a
-     * single message.
+     * Behaves like {@link #listenAlways(Class, Consumer)}, but the {@code listener} is claimed and unregistered
+     * before invocation, so nested or concurrent posts cannot deliver a second message to it.
      */
     <T extends AbstractMessage> void listenOnce(@NotNull Class<T> messageClass, @Nullable Object associatedObject, @NotNull Consumer<T> listener);
 
@@ -52,6 +52,10 @@ public interface IMessageBus {
 
     /**
      * Posts a message to this bus and distributes it to all listeners. Should be called by a {@link IMessageProcessor}.
+     * The default implementation snapshots listeners in registration order before invoking callbacks outside the
+     * registry lock. Registration and removal affect subsequent dispatches, including nested posts, but do not
+     * revoke callbacks already claimed for the current dispatch. Concurrent posts may invoke persistent listeners
+     * concurrently. A failing callback is reported to standard error and does not prevent later callbacks.
      *
      * @param message The message to post
      */

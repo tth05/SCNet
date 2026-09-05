@@ -70,20 +70,26 @@ public class DefaultMessageBus implements IMessageBus {
 
     @Override
     public void post(@NotNull AbstractMessage message) {
+        List<RegisteredListener> dispatch;
         synchronized (this.listeners) {
-            for (Iterator<RegisteredListener> iterator = this.listeners.getOrDefault(message.getClass(), Collections.emptyList()).iterator(); iterator.hasNext(); ) {
-                RegisteredListener listener = iterator.next();
-
-                try {
-                    //noinspection unchecked
-                    listener.listener.accept(message);
-                } catch (Throwable t) {
-                    System.err.println("Exception occurred while handling message: " + message.getClass().getName());
-                    t.printStackTrace();
-                }
-
-                if (listener.once)
-                    iterator.remove();
+            List<RegisteredListener> registered = this.listeners.get(message.getClass());
+            if (registered == null || registered.isEmpty()) {
+                return;
+            }
+            dispatch = List.copyOf(registered);
+            // Claim one-shot callbacks before application code can post another message.
+            registered.removeIf(listener -> listener.once);
+            if (registered.isEmpty()) {
+                this.listeners.remove(message.getClass());
+            }
+        }
+        for (RegisteredListener listener : dispatch) {
+            try {
+                //noinspection unchecked
+                listener.listener.accept(message);
+            } catch (Throwable t) {
+                System.err.println("Exception occurred while handling message: " + message.getClass().getName());
+                t.printStackTrace();
             }
         }
     }
