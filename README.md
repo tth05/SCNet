@@ -68,7 +68,9 @@ public class Example {
 
 Frames contain a two-byte ID, a four-byte payload length and the payload. UTF-8 strings have a four-byte byte-length prefix. Default frame payloads, strings and standalone output buffers are capped at 16 MiB. Configure smaller or larger protocol-specific limits before connecting with `setMaxFrameSize` and `setMaxStringLength`, or explicit stream constructors. The payload limit includes string prefixes and other fields.
 
-The selector blocks until socket readiness or an enqueue wakeup; there is no polling-delay setting. A partially written frame stays pending until the socket becomes writable. Serialization failures close the transport and are reported through connection error callbacks; messages are not replayed. The outbound message queue is currently unbounded, so per-frame limits do not bound total queued application data.
+The selector blocks until socket readiness or an enqueue wakeup; there is no polling-delay setting. A partially written frame stays pending until the socket becomes writable. Serialization failures close the transport and are reported through connection error callbacks; messages are not replayed.
+
+At most 1024 accepted messages may await complete transmission, including the frame currently being serialized or written. Configure this count before connecting with `setMaxPendingMessages`. Overflow throws `RejectedExecutionException` to the producer and fails the connection through its normal error callback. Producers never wait for queue capacity, and reset discards pending messages before another connection starts. This bounds retained message count; it does not measure the heap size of arbitrary object graphs referenced by messages. Per-frame payload limits still apply when serializing.
 
 `close()` closes immediately. `closeAfterPendingWrites()` on Client, or `closeClientAfterPendingWrites()` on Server, rejects new outbound messages and completes after queued bytes are written. It does not acknowledge remote application processing.
 

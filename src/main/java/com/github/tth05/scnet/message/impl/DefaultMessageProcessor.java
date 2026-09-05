@@ -45,6 +45,9 @@ public class DefaultMessageProcessor implements IMessageProcessor {
     /** Default UTF-8 string limit; the enclosing payload limit also applies. */
     public static final int DEFAULT_MAX_STRING_LENGTH = ByteBufferInputStream.DEFAULT_MAX_STRING_BYTES;
 
+    /** Includes the frame currently being serialized or written. */
+    public static final int DEFAULT_MAX_PENDING_MESSAGES = 1024;
+
     @NotNull
     private final Map<Short, RegisteredIncomingMessage> incomingMessages = new ConcurrentHashMap<>();
     @NotNull
@@ -56,6 +59,10 @@ public class DefaultMessageProcessor implements IMessageProcessor {
     private final Object outboundStateLock = new Object();
 
     private boolean acceptingOutboundMessages = true;
+    private int pendingMessageCount;
+    private volatile int maxPendingMessages = DEFAULT_MAX_PENDING_MESSAGES;
+    @Nullable
+    private volatile RejectedExecutionException outboundFailure;
     @Nullable
     private CompletableFuture<Void> outboundDrain;
 
@@ -141,13 +148,33 @@ public class DefaultMessageProcessor implements IMessageProcessor {
     @Override
     public void enqueueMessage(@NotNull AbstractMessage message) {
         Objects.requireNonNull(message, "message");
+        RejectedExecutionException failure = null;
         synchronized (this.outboundStateLock) {
+            checkOutboundFailure();
             if (!this.acceptingOutboundMessages) {
                 throw new RejectedExecutionException("The connection is draining pending outbound messages");
             }
-            this.outgoingMessageQueue.offer(message);
+            if (this.pendingMessageCount >= this.maxPendingMessages) {
+                failure = new RejectedExecutionException("Outbound queue exceeded " + this.maxPendingMessages
+                        + " pending messages; closing the connection because the receiver is not keeping up");
+                this.outboundFailure = failure;
+                this.acceptingOutboundMessages = false;
+            } else {
+                this.outgoingMessageQueue.offer(message);
+                this.pendingMessageCount++;
+            }
         }
         wakeActiveSelector();
+        if (failure != null) {
+            throw failure;
+        }
+    }
+
+    private void checkOutboundFailure() {
+        RejectedExecutionException failure = this.outboundFailure;
+        if (failure != null) {
+            throw failure;
+        }
     }
 
     @Override
@@ -180,11 +207,13 @@ public class DefaultMessageProcessor implements IMessageProcessor {
         this.lastError = null;
 
         try {
+            checkOutboundFailure();
             if (completeOutboundDrainIfReady()) {
                 return false;
             }
             updateWriteInterest(selector, channel);
             selector.select();
+            checkOutboundFailure();
 
             for (Iterator<SelectionKey> iterator = selector.selectedKeys().iterator(); iterator.hasNext(); ) {
                 SelectionKey key = iterator.next();
@@ -245,6 +274,7 @@ public class DefaultMessageProcessor implements IMessageProcessor {
 
     private void writeAvailable(SocketChannel channel) throws IOException {
         while (true) {
+            checkOutboundFailure();
             if (this.pendingWrite == null) {
                 this.pendingWrite = serializeNextFrame();
                 if (this.pendingWrite == null) {
@@ -257,6 +287,9 @@ public class DefaultMessageProcessor implements IMessageProcessor {
                 return;
             }
             this.pendingWrite = null;
+            synchronized (this.outboundStateLock) {
+                this.pendingMessageCount--;
+            }
         }
     }
 
@@ -323,6 +356,7 @@ public class DefaultMessageProcessor implements IMessageProcessor {
         }
 
         while (true) {
+            checkOutboundFailure();
             this.readChunk.clear();
             int bytesRead = channel.read(this.readChunk);
             if (bytesRead == -1) {
@@ -414,6 +448,8 @@ public class DefaultMessageProcessor implements IMessageProcessor {
             unfinishedDrain = this.outboundDrain;
             this.outboundDrain = null;
             this.acceptingOutboundMessages = true;
+            this.outboundFailure = null;
+            this.pendingMessageCount = 0;
             this.outgoingMessageQueue.clear();
         }
         this.activeSelector = null;
@@ -425,6 +461,21 @@ public class DefaultMessageProcessor implements IMessageProcessor {
         if (unfinishedDrain != null && !unfinishedDrain.isDone()) {
             unfinishedDrain.completeExceptionally(new ClosedChannelException());
         }
+    }
+
+    @Override
+    public void setMaxPendingMessages(int count) {
+        synchronized (this.outboundStateLock) {
+            if (count < 1 || count < this.pendingMessageCount) {
+                throw new IllegalArgumentException("Pending message limit must be positive and at least the current pending count");
+            }
+            this.maxPendingMessages = count;
+        }
+    }
+
+    @Override
+    public int getMaxPendingMessages() {
+        return this.maxPendingMessages;
     }
 
     @Override

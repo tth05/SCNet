@@ -50,10 +50,25 @@ public interface IMessageProcessor {
      * Enqueues a message to be sent at some point in the future. Implementations should wake a blocked process loop.
      * If a non-registered message is enqueued, {@link #process(Selector, SocketChannel, IMessageBus)} reports an error
      * when it tries to send it.
+     * The default processor bounds the pending message count, including its partial frame. Exceeding the limit
+     * rejects the message and fails the connection through the normal process/error lifecycle. Producers never
+     * wait for queue capacity. Reconnection requires a reset and does not replay rejected or pending messages.
      *
      * @param message the message to enqueue
+     * @throws java.util.concurrent.RejectedExecutionException if draining, failed, or the pending queue is full
      */
     void enqueueMessage(@NotNull AbstractMessage message);
+
+    /**
+     * Sets the maximum accepted messages awaiting complete transmission, including the current frame.
+     * This bounds message ownership, not the heap size of arbitrary graphs referenced by message objects.
+     * Configure before connecting. The default processor uses 1024.
+     * @param count positive limit, at least the current pending count
+     */
+    void setMaxPendingMessages(int count);
+
+    /** @return the configured pending message count limit */
+    int getMaxPendingMessages();
 
     /**
      * Atomically stops accepting outgoing messages and drains every frame accepted before this call. Implementations
