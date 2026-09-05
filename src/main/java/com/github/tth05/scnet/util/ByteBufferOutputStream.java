@@ -15,7 +15,8 @@ import java.nio.charset.StandardCharsets;
 public class ByteBufferOutputStream {
 
     /** Compatibility default matching the range accepted by the original stream implementation. */
-    public static final int DEFAULT_MAX_STRING_BYTES = Integer.MAX_VALUE - Integer.BYTES;
+    public static final int DEFAULT_MAX_STRING_BYTES = ByteBufferInputStream.DEFAULT_MAX_STRING_BYTES;
+    public static final int DEFAULT_MAX_CAPACITY = 16 * 1024 * 1024;
 
     /**
      * The internal {@link ByteBuffer} used to write bytes to.
@@ -32,7 +33,7 @@ public class ByteBufferOutputStream {
     }
 
     public ByteBufferOutputStream(int size) {
-        this(size, Integer.MAX_VALUE - 8, DEFAULT_MAX_STRING_BYTES);
+        this(size, DEFAULT_MAX_CAPACITY, DEFAULT_MAX_STRING_BYTES);
     }
 
     public ByteBufferOutputStream(int size, int maxCapacity, int maxStringBytes) {
@@ -43,7 +44,7 @@ public class ByteBufferOutputStream {
     }
 
     public ByteBufferOutputStream(@NotNull ByteBuffer buffer) {
-        this(buffer, Integer.MAX_VALUE - 8, DEFAULT_MAX_STRING_BYTES);
+        this(buffer, DEFAULT_MAX_CAPACITY, DEFAULT_MAX_STRING_BYTES);
     }
 
     public ByteBufferOutputStream(@NotNull ByteBuffer buffer, int maxCapacity, int maxStringBytes) {

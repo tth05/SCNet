@@ -99,20 +99,6 @@ public interface IMessageProcessor {
     void reset();
 
     /**
-     * Retained for compatibility with processors which poll. Event-driven implementations may ignore this value.
-     *
-     * @param delay the delay in milliseconds
-     * @see #getProcessLoopDelay()
-     */
-    void setProcessLoopDelay(int delay);
-
-    /**
-     * @return the configured polling delay in milliseconds
-     */
-    @Contract(pure = true)
-    int getProcessLoopDelay();
-
-    /**
      * Sets the initial payload serialization buffer size. A frame may grow beyond this value up to the configured
      * maximum frame size.
      *
@@ -144,28 +130,20 @@ public interface IMessageProcessor {
     /**
      * Sets the maximum accepted or produced message payload size in bytes.
      */
-    default void setMaxFrameSize(int size) {
-        throw new UnsupportedOperationException();
-    }
+    void setMaxFrameSize(int size);
 
     /**
      * Returns the maximum accepted or produced message payload size in bytes.
      */
-    default int getMaxFrameSize() {
-        return Integer.MAX_VALUE - 6;
-    }
+    int getMaxFrameSize();
 
     /**
      * Sets the maximum UTF-8 byte length accepted or produced by string stream methods.
      */
-    default void setMaxStringLength(int size) {
-        throw new UnsupportedOperationException();
-    }
+    void setMaxStringLength(int size);
 
     /**
      * Returns the maximum UTF-8 byte length accepted or produced by string stream methods.
      */
-    default int getMaxStringLength() {
-        return Integer.MAX_VALUE - 4;
-    }
+    int getMaxStringLength();
 }

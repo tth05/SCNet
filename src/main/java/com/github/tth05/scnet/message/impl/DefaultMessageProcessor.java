@@ -39,23 +39,11 @@ public class DefaultMessageProcessor implements IMessageProcessor {
 
     private static final int MESSAGE_HEADER_BYTES = Short.BYTES + Integer.BYTES;
 
-    /**
-     * Compatibility default matching the payload range accepted by the original protocol implementation.
-     * Applications accepting untrusted peers should configure a smaller limit explicitly.
-     */
-    public static final int DEFAULT_MAX_FRAME_SIZE = Integer.MAX_VALUE - MESSAGE_HEADER_BYTES;
+    /** Default payload limit, configurable before connecting. */
+    public static final int DEFAULT_MAX_FRAME_SIZE = ByteBufferOutputStream.DEFAULT_MAX_CAPACITY;
 
-    /**
-     * Compatibility default matching the string range accepted by the original stream implementation.
-     * Applications accepting untrusted peers should configure a smaller limit explicitly.
-     */
-    public static final int DEFAULT_MAX_STRING_LENGTH = Integer.MAX_VALUE - Integer.BYTES;
-
-    /** A conservative application-level frame limit for trusted local protocols. */
-    public static final int RECOMMENDED_MAX_FRAME_SIZE = 16 * 1024 * 1024;
-
-    /** A conservative application-level string limit for trusted local protocols. */
-    public static final int RECOMMENDED_MAX_STRING_LENGTH = 16 * 1024 * 1024;
+    /** Default UTF-8 string limit; the enclosing payload limit also applies. */
+    public static final int DEFAULT_MAX_STRING_LENGTH = ByteBufferInputStream.DEFAULT_MAX_STRING_BYTES;
 
     @NotNull
     private final Map<Short, RegisteredIncomingMessage> incomingMessages = new ConcurrentHashMap<>();
@@ -86,7 +74,6 @@ public class DefaultMessageProcessor implements IMessageProcessor {
     @Nullable
     private volatile Throwable lastError;
 
-    private volatile int processLoopDelay = 5;
     private volatile int writeBufferSize = 16384;
     private volatile int readBufferSize = 4096;
     private volatile int maxFrameSize = DEFAULT_MAX_FRAME_SIZE;
@@ -438,23 +425,6 @@ public class DefaultMessageProcessor implements IMessageProcessor {
         if (unfinishedDrain != null && !unfinishedDrain.isDone()) {
             unfinishedDrain.completeExceptionally(new ClosedChannelException());
         }
-    }
-
-    /**
-     * Retained for source compatibility. The selector now blocks until I/O or an enqueue wakeup, so this value is not
-     * used as a polling delay.
-     */
-    @Override
-    public void setProcessLoopDelay(int processLoopDelay) {
-        if (processLoopDelay < 0) {
-            throw new IllegalArgumentException("processLoopDelay cannot be negative");
-        }
-        this.processLoopDelay = processLoopDelay;
-    }
-
-    @Override
-    public int getProcessLoopDelay() {
-        return this.processLoopDelay;
     }
 
     @Override

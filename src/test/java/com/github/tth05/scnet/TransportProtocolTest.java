@@ -142,18 +142,18 @@ public class TransportProtocolTest extends AbstractSCNetTest {
     }
 
     @Test
-    public void genericDefaultsPreserveLegacyRangeWhileApplicationsCanSelectSafeCaps() {
+    public void defaultsBoundFramesAndStringsWhileAllowingExplicitLimits() {
         DefaultMessageProcessor processor = new DefaultMessageProcessor();
 
-        assertEquals(Integer.MAX_VALUE - 6, processor.getMaxFrameSize());
-        assertEquals(Integer.MAX_VALUE - 4, processor.getMaxStringLength());
-        assertEquals(Integer.MAX_VALUE - 4, ByteBufferInputStream.DEFAULT_MAX_STRING_BYTES);
-        assertEquals(Integer.MAX_VALUE - 4, ByteBufferOutputStream.DEFAULT_MAX_STRING_BYTES);
-
-        processor.setMaxFrameSize(DefaultMessageProcessor.RECOMMENDED_MAX_FRAME_SIZE);
-        processor.setMaxStringLength(DefaultMessageProcessor.RECOMMENDED_MAX_STRING_LENGTH);
         assertEquals(16 * 1024 * 1024, processor.getMaxFrameSize());
         assertEquals(16 * 1024 * 1024, processor.getMaxStringLength());
+        assertEquals(16 * 1024 * 1024, ByteBufferInputStream.DEFAULT_MAX_STRING_BYTES);
+        assertEquals(16 * 1024 * 1024, ByteBufferOutputStream.DEFAULT_MAX_STRING_BYTES);
+
+        processor.setMaxFrameSize(1024);
+        processor.setMaxStringLength(128);
+        assertEquals(1024, processor.getMaxFrameSize());
+        assertEquals(128, processor.getMaxStringLength());
     }
 
     private void assertMalformedFrame(ByteBuffer frame, int maxFrameSize, int maxStringLength) throws Exception {
