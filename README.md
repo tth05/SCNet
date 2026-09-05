@@ -7,17 +7,17 @@ SCNet connects one client and one server with typed messages over Java NIO socke
 Use the checked-in wrapper:
 
 ```powershell
-.\gradlew.bat clean build publishToMavenLocal '-PscnetVersion=2.0.0' --warning-mode fail
+.\gradlew.bat build publishToMavenLocal '-PscnetVersion=2.0.0' --warning-mode fail
 ```
 
-The current coordinated development build uses `com.github.tth05:SCNet:2.0.0`. Public release publication is still pending. Consumers of published versions use Packagecloud:
+The library coordinates are `com.github.tth05:SCNet`. Select a published version from Packagecloud:
 
 ```groovy
 repositories {
     maven { url = uri('https://packagecloud.io/tth05/repo/maven2') }
 }
 dependencies {
-    implementation 'com.github.tth05:SCNet:2.0.0'
+    implementation 'com.github.tth05:SCNet:<published-version>'
 }
 ```
 
