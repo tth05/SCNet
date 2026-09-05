@@ -6,7 +6,6 @@ import org.jetbrains.annotations.Nullable;
 
 import java.nio.channels.Selector;
 import java.nio.channels.SocketChannel;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.function.Supplier;
 
@@ -78,11 +77,7 @@ public interface IMessageProcessor {
      * @return a stage completed when all accepted outbound bytes have been written to the channel, or completed
      * exceptionally if serialization or I/O prevents the drain
      */
-    default CompletionStage<Void> beginOutboundDrain() {
-        CompletableFuture<Void> unsupported = new CompletableFuture<>();
-        unsupported.completeExceptionally(new UnsupportedOperationException("Outbound draining is not supported"));
-        return unsupported;
-    }
+    CompletionStage<Void> beginOutboundDrain();
 
     /**
      * Waits for I/O readiness, writes queued message data, and forwards complete incoming messages to the message bus.
@@ -101,9 +96,7 @@ public interface IMessageProcessor {
      * A {@code null} value means the peer closed the connection normally.
      */
     @Nullable
-    default Throwable getLastError() {
-        return null;
-    }
+    Throwable getLastError();
 
     /**
      * Resets all buffers and message queues of this message processor to put it back in its original state. This should

@@ -106,7 +106,7 @@ public class Client extends AbstractClient {
             connectKey.interestOps(SelectionKey.OP_READ);
             getMessageProcessor().reset();
             installConnectedChannel(newSelector, newChannel);
-            startEventLoop(this.executor, null);
+            startEventLoop(this.executor);
             return true;
         } catch (ConnectException e) {
             setConnectFailed(e);

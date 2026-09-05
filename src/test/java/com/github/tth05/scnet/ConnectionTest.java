@@ -1,14 +1,10 @@
 package com.github.tth05.scnet;
 
-import com.github.tth05.scnet.message.IMessageBus;
-import com.github.tth05.scnet.message.impl.DefaultMessageProcessor;
 import com.github.tth05.scnet.message.impl.EmptyMessage;
-import org.jetbrains.annotations.NotNull;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 import java.net.InetSocketAddress;
-import java.nio.channels.Selector;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.util.List;
@@ -365,110 +361,4 @@ public class ConnectionTest extends AbstractSCNetTest {
         }
     }
 
-    @Test
-    public void closeDoesNotResetProcessorWhileManualProcessIsRunning() throws Exception {
-        ExecutorService executor = Executors.newSingleThreadExecutor();
-        try (ManualClient client = new ManualClient()) {
-            BlockingMessageProcessor processor = new BlockingMessageProcessor();
-            client.setMessageProcessor(processor);
-            Future<Boolean> processResult = executor.submit(client::processOnce);
-            await(processor.entered);
-
-            client.close();
-            assertFalse(processor.resetWhileProcessing.get());
-            assertEquals(0, processor.resetCalls.get());
-
-            processor.release.countDown();
-            assertFalse(processResult.get(3, TimeUnit.SECONDS));
-            await(processor.reset);
-            assertFalse(processor.resetWhileProcessing.get());
-            assertEquals(1, processor.resetCalls.get());
-        } finally {
-            executor.shutdownNow();
-        }
-    }
-
-    @Test
-    public void bothAbstractClientConstructorsUseTheOverridableInitializationContract() throws Exception {
-        ConstructorTrackingClient.initializations.set(0);
-        try (ConstructorTrackingClient ignored = new ConstructorTrackingClient()) {
-            assertEquals(1, ConstructorTrackingClient.initializations.get());
-        }
-
-        ConstructorTrackingClient.initializations.set(0);
-        try (ServerSocketChannel rawServer = ServerSocketChannel.open()) {
-            rawServer.bind(new InetSocketAddress("127.0.0.1", 0));
-            try (ConstructorTrackingClient ignored = new ConstructorTrackingClient(
-                    SocketChannel.open(rawServer.getLocalAddress())
-            ); SocketChannel accepted = rawServer.accept()) {
-                assertEquals(1, ConstructorTrackingClient.initializations.get());
-                assertTrue(accepted.isConnected());
-            }
-        }
-    }
-
-    private static final class ManualClient extends AbstractClient {
-
-        private boolean processOnce() {
-            return process();
-        }
-    }
-
-    private static final class BlockingMessageProcessor extends DefaultMessageProcessor {
-
-        private final CountDownLatch entered = new CountDownLatch(1);
-        private final CountDownLatch release = new CountDownLatch(1);
-        private final CountDownLatch reset = new CountDownLatch(1);
-        private final AtomicBoolean processing = new AtomicBoolean();
-        private final AtomicBoolean resetWhileProcessing = new AtomicBoolean();
-        private final AtomicInteger resetCalls = new AtomicInteger();
-
-        @Override
-        public boolean process(
-                @NotNull Selector selector,
-                @NotNull SocketChannel channel,
-                @NotNull IMessageBus messageBus
-        ) {
-            this.processing.set(true);
-            this.entered.countDown();
-            try {
-                assertTrue(this.release.await(3, TimeUnit.SECONDS));
-                return false;
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                return false;
-            } finally {
-                this.processing.set(false);
-            }
-        }
-
-        @Override
-        public void reset() {
-            if (this.processing.get()) {
-                this.resetWhileProcessing.set(true);
-            }
-            this.resetCalls.incrementAndGet();
-            super.reset();
-            this.reset.countDown();
-        }
-    }
-
-    @SuppressWarnings("deprecation")
-    private static final class ConstructorTrackingClient extends AbstractClient {
-
-        private static final AtomicInteger initializations = new AtomicInteger();
-
-        private ConstructorTrackingClient() {
-        }
-
-        private ConstructorTrackingClient(SocketChannel channel) {
-            super(channel);
-        }
-
-        @Override
-        protected void initChannelAndSelector(SocketChannel socketChannel) {
-            initializations.incrementAndGet();
-            super.initChannelAndSelector(socketChannel);
-        }
-    }
 }

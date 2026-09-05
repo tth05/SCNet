@@ -25,7 +25,6 @@ class ServerClient extends AbstractClient {
             @NotNull IMessageBus messageBus,
             @NotNull Consumer<ServerClient> afterClose
     ) throws IOException {
-        close();
         setMessageProcessor(messageProcessor);
         setMessageBus(messageBus);
         this.connectionListeners = connectionListeners;
