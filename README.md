@@ -7,7 +7,7 @@ SCNet connects one client and one server with typed messages over Java NIO socke
 Use the checked-in wrapper:
 
 ```powershell
-.\gradlew.bat build publishToMavenLocal '-PscnetVersion=2.0.0' --warning-mode fail
+.\gradlew.bat build publishToMavenLocal '-PscnetVersion=2.1.0' --warning-mode fail
 ```
 
 The library coordinates are `com.github.tth05:SCNet`. Select a published version from Packagecloud:
@@ -23,9 +23,11 @@ dependencies {
 
 For local coordinated builds, explicitly add Maven Local to the consumer's repositories. A public consumer must resolve the selected version without that local repository.
 
+The explicit directional registration API below requires 2.1.0. Until that version is published, use the local publication from this checkout.
+
 ## Example
 
-Register incoming factories explicitly. The same message ID must have the same payload layout on both sides. Outgoing-only messages can use the two-argument registration overload.
+Register direction at each endpoint, using the same message class and wire ID on both sides. Incoming registrations require a factory. Use `registerBidirectional` when both endpoints send the same message kind. The existing `registerMessage` overloads still infer direction from the message superclass.
 
 ```java
 import com.github.tth05.scnet.Client;
@@ -48,8 +50,8 @@ public class Example {
 
     public static void main(String[] args) throws Exception {
         try (Server server = new Server(); Client client = new Client()) {
-            server.getMessageProcessor().registerMessage((short) 1, TextMessage.class, TextMessage::new);
-            client.getMessageProcessor().registerMessage((short) 1, TextMessage.class, TextMessage::new);
+            server.getMessageProcessor().registerIncoming((short) 1, TextMessage.class, TextMessage::new);
+            client.getMessageProcessor().registerOutgoing((short) 1, TextMessage.class);
             CountDownLatch received = new CountDownLatch(1);
             server.getMessageBus().listenOnce(TextMessage.class, message -> {
                 System.out.println(message.text);

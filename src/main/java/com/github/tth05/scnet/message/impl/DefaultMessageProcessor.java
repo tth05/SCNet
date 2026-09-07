@@ -95,7 +95,7 @@ public class DefaultMessageProcessor implements IMessageProcessor {
 
     @Override
     public <T extends AbstractMessageOutgoing> void registerMessage(short id, @NotNull Class<T> messageClass) {
-        registerMessageInternal(id, messageClass, null);
+        registerOutgoing(id, messageClass);
     }
 
     @Override
@@ -104,13 +104,37 @@ public class DefaultMessageProcessor implements IMessageProcessor {
             @NotNull Class<T> messageClass,
             @NotNull Supplier<? extends T> instanceFactory
     ) {
-        registerMessageInternal(id, messageClass, Objects.requireNonNull(instanceFactory, "instanceFactory"));
+        Objects.requireNonNull(messageClass, "messageClass");
+        registerMessageInternal(id, messageClass, Objects.requireNonNull(instanceFactory, "instanceFactory"),
+                !AbstractMessageOutgoing.class.isAssignableFrom(messageClass),
+                !AbstractMessageIncoming.class.isAssignableFrom(messageClass));
+    }
+
+    @Override
+    public <T extends AbstractMessage> void registerIncoming(
+            short id, @NotNull Class<T> messageClass, @NotNull Supplier<? extends T> instanceFactory
+    ) {
+        registerMessageInternal(id, messageClass, Objects.requireNonNull(instanceFactory, "instanceFactory"), true, false);
+    }
+
+    @Override
+    public <T extends AbstractMessage> void registerOutgoing(short id, @NotNull Class<T> messageClass) {
+        registerMessageInternal(id, messageClass, null, false, true);
+    }
+
+    @Override
+    public <T extends AbstractMessage> void registerBidirectional(
+            short id, @NotNull Class<T> messageClass, @NotNull Supplier<? extends T> instanceFactory
+    ) {
+        registerMessageInternal(id, messageClass, Objects.requireNonNull(instanceFactory, "instanceFactory"), true, true);
     }
 
     private synchronized <T extends AbstractMessage> void registerMessageInternal(
             short id,
             @NotNull Class<T> messageClass,
-            @Nullable Supplier<? extends T> instanceFactory
+            @Nullable Supplier<? extends T> instanceFactory,
+            boolean incoming,
+            boolean outgoing
     ) {
         Objects.requireNonNull(messageClass, "messageClass");
         if (id < 1) {
@@ -120,10 +144,11 @@ public class DefaultMessageProcessor implements IMessageProcessor {
             throw new IllegalArgumentException("message with id " + id + " is already registered");
         }
 
-        boolean incoming = !AbstractMessageOutgoing.class.isAssignableFrom(messageClass);
-        boolean outgoing = !AbstractMessageIncoming.class.isAssignableFrom(messageClass);
-        if (!incoming && !outgoing) {
-            throw new IllegalArgumentException("message class cannot be both incoming-only and outgoing-only");
+        if (incoming && AbstractMessageOutgoing.class.isAssignableFrom(messageClass)) {
+            throw new IllegalArgumentException("outgoing-only message class cannot be registered for receiving");
+        }
+        if (outgoing && AbstractMessageIncoming.class.isAssignableFrom(messageClass)) {
+            throw new IllegalArgumentException("incoming-only message class cannot be registered for sending");
         }
         if (outgoing && this.outgoingMessages.containsKey(messageClass)) {
             throw new IllegalArgumentException("outgoing message class " + messageClass.getName() + " is already registered");

@@ -19,6 +19,30 @@ import static org.junit.jupiter.api.Assertions.*;
 public class SendMessageTest extends AbstractSCNetTest {
 
     @Test
+    public void sharedMessageUsesEndpointDirectionsAndBidirectionalReplies() throws Exception {
+        withClientAndServer((server, client) -> {
+            client.getMessageProcessor().registerOutgoing((short) 1, IntMessage.class);
+            server.getMessageProcessor().registerIncoming((short) 1, IntMessage.class, IntMessage::new);
+            client.getMessageProcessor().registerBidirectional((short) 2, FactoryMessage.class, () -> new FactoryMessage(0));
+            server.getMessageProcessor().registerBidirectional((short) 2, FactoryMessage.class, () -> new FactoryMessage(0));
+            CountDownLatch replies = new CountDownLatch(2);
+            server.getMessageBus().listenOnce(IntMessage.class, message -> {
+                assertEquals(42, message.i);
+                server.getMessageProcessor().enqueueMessage(new FactoryMessage(message.i));
+            });
+            client.getMessageBus().listenOnce(FactoryMessage.class, message -> {
+                if (message.value == 42) replies.countDown();
+                client.getMessageProcessor().enqueueMessage(new FactoryMessage(message.value + 1));
+            });
+            server.getMessageBus().listenOnce(FactoryMessage.class, message -> {
+                if (message.value == 43) replies.countDown();
+            });
+            client.getMessageProcessor().enqueueMessage(new IntMessage(42));
+            await(replies);
+        });
+    }
+
+    @Test
     public void testSendBasicMessage() throws Exception {
         int number = ThreadLocalRandom.current().nextInt(Integer.MAX_VALUE);
         withClientAndServer((s, c) -> {

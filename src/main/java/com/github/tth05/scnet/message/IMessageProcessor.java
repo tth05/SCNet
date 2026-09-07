@@ -13,9 +13,29 @@ import java.util.function.Supplier;
  * A message processor will send enqueued messages and forward received messages to a {@link IMessageBus}.
  * <br>
  * To recognize messages, they must be registered with the message processor. Outgoing-only messages only need their
- * class. Incoming and bidirectional messages also need a caller-provided factory.
+ * class. Incoming and bidirectional messages also need a caller-provided factory. Prefer explicit directional
+ * registration when sharing message classes between endpoints. The registerMessage overloads retain
+ * superclass-based direction for existing consumers.
  */
 public interface IMessageProcessor {
+
+    /**
+     * Registers a message for receiving only at this endpoint. The same class may be registered for sending
+     * at the peer. Direction is local to registration; it need not be encoded in the message superclass.
+     * IDs must be positive and unique. A fresh instance is required for each received message.
+     */
+    <T extends AbstractMessage> void registerIncoming(short id, @NotNull Class<T> messageClass,
+                                                     @NotNull Supplier<? extends T> instanceFactory);
+
+    /**
+     * Registers a message for sending only at this endpoint. Frames received with this ID are ignored
+     * without decoding their payload. IDs must be positive and unique, as must outgoing classes.
+     */
+    <T extends AbstractMessage> void registerOutgoing(short id, @NotNull Class<T> messageClass);
+
+    /** Registers a message for both sending and receiving at this endpoint, under one unique positive ID. */
+    <T extends AbstractMessage> void registerBidirectional(short id, @NotNull Class<T> messageClass,
+                                                          @NotNull Supplier<? extends T> instanceFactory);
 
     /**
      * Registers an outgoing-only message with this message processor.
